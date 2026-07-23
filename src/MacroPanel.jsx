@@ -1,39 +1,37 @@
+import { useMemo } from 'react'
+
 const DEFORM = { 0: 0.35, 20: 0.70, 40: 1.0, 60: 0.85, 80: 1.25 }
 
-// All cracks originate at [0.5, 0] — centre of the punch-plate contact — and
-// propagate downward.  Patterns vary by sand%: brittle splits vs. shear cones.
-const CRACKS = {
-  0: [  // pure cement paste — vertical splitting failure
-    { pts: [[0.5, 0], [0.50, 1.00]], delay: 0,   w: 2.5 },
-    { pts: [[0.5, 0], [0.14, 1.00]], delay: 80,  w: 1.5 },
-    { pts: [[0.5, 0], [0.86, 1.00]], delay: 80,  w: 1.5 },
-  ],
-  20: [  // slightly tortuous diagonal shear
-    { pts: [[0.5, 0], [0.18, 0.95]], delay: 0,   w: 2.5 },
-    { pts: [[0.5, 0], [0.82, 0.90]], delay: 110, w: 1.8 },
-  ],
-  40: [  // peak-strength mix — classic shear-cone failure
-    { pts: [[0.5, 0], [0.05, 0.95]], delay: 0,  w: 3.0 },
-    { pts: [[0.5, 0], [0.95, 0.95]], delay: 40, w: 2.5 },
-  ],
-  60: [  // excess aggregate — cone + secondary splits
-    { pts: [[0.5, 0], [0.08, 0.55]], delay: 0,   w: 2.0 },
-    { pts: [[0.5, 0], [0.92, 0.50]], delay: 80,  w: 2.0 },
-    { pts: [[0.5, 0], [0.22, 1.00]], delay: 130, w: 1.8 },
-    { pts: [[0.5, 0], [0.78, 1.00]], delay: 170, w: 1.5 },
-  ],
-  80: [  // weak paste — many short cracks radiating from punch zone
-    { pts: [[0.5, 0], [0.32, 0.45]], delay: 0,  w: 1.5 },
-    { pts: [[0.5, 0], [0.68, 0.40]], delay: 28, w: 1.5 },
-    { pts: [[0.5, 0], [0.22, 0.80]], delay: 52, w: 1.5 },
-    { pts: [[0.5, 0], [0.72, 0.75]], delay: 38, w: 1.5 },
-    { pts: [[0.5, 0], [0.42, 1.00]], delay: 65, w: 1.5 },
-    { pts: [[0.5, 0], [0.58, 1.00]], delay: 75, w: 1.2 },
-    { pts: [[0.5, 0], [0.15, 0.55]], delay: 92, w: 1.2 },
-  ],
+// Jaggedness parameters by sand%: more sand → more segments, larger lateral swings
+const CRACK_CFG = {
+   0: { nSegs:  1, dev: 0.00 },
+  20: { nSegs:  3, dev: 0.06 },
+  40: { nSegs:  7, dev: 0.13 },
+  60: { nSegs: 11, dev: 0.20 },
+  80: { nSegs: 17, dev: 0.28 },
 }
 
-export default function MacroPanel({ phase = 'idle', force = 0, sandPct = 40 }) {
+function makeRand(seed) {
+  let s = (seed * 1664525 + 1013904223) >>> 0
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 0x100000000 }
+}
+
+// Returns normalised [x, y] pairs — x in [0,1] across block width, y in [0,1] down
+function generateCrack(sandPct, seed) {
+  const { nSegs, dev } = CRACK_CFG[sandPct] ?? CRACK_CFG[40]
+  if (nSegs <= 1) return [[0.5, 0], [0.5, 1.0]]
+  const rand = makeRand(seed)
+  const pts = [[0.5, 0]]
+  let x = 0.5
+  for (let i = 1; i <= nSegs; i++) {
+    x += (rand() - 0.5) * dev * 2
+    x = Math.max(0.06, Math.min(0.94, x))
+    pts.push([x, i / nSegs])
+  }
+  return pts
+}
+
+export default function MacroPanel({ phase = 'idle', force = 0, sandPct = 40, layoutSeed = 0 }) {
   const blockW = 180
   const blockH = 90
   const plateH = 14
@@ -75,16 +73,19 @@ export default function MacroPanel({ phase = 'idle', force = 0, sandPct = 40 }) 
   const forceKN   = Math.round(force * 1200)
   const showForce = phase !== 'idle' || force > 0
 
-  // ── Crack path builder ─────────────────────────────────────────
-  function crackD([[x0n, y0n], [x1n, y1n]]) {
-    const x0 = blockX + x0n * currentBlockW
-    const y0 = blockY + y0n * currentBlockH
-    const x1 = blockX + x1n * currentBlockW
-    const y1 = blockY + y1n * currentBlockH
-    return `M${x0.toFixed(1)},${y0.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)}`
-  }
+  // ── Crack path ─────────────────────────────────────────────────
+  const crackPts = useMemo(
+    () => generateCrack(sandPct, layoutSeed * 7919 + sandPct * 137),
+    [sandPct, layoutSeed]
+  )
 
-  const cracks = CRACKS[sandPct] ?? []
+  function blockPath(pts) {
+    return pts.map(([xn, yn], i) => {
+      const x = (blockX + xn * currentBlockW).toFixed(1)
+      const y = (blockY + yn * currentBlockH).toFixed(1)
+      return `${i === 0 ? 'M' : 'L'}${x},${y}`
+    }).join(' ')
+  }
 
   return (
     <svg
@@ -141,20 +142,19 @@ export default function MacroPanel({ phase = 'idle', force = 0, sandPct = 40 }) 
         />
       ))}
 
-      {/* ── Cracks ── */}
-      {phase === 'failed' && cracks.map((c, i) => (
+      {/* ── Crack ── */}
+      {phase === 'failed' && (
         <path
-          key={i}
-          d={crackD(c.pts)}
+          d={blockPath(crackPts)}
           stroke="#1c1c1c"
-          strokeWidth={c.w}
+          strokeWidth={2.5}
           fill="none"
           strokeLinecap="round"
+          strokeLinejoin="round"
           pathLength="1"
           className="crack"
-          style={{ animationDelay: `${c.delay}ms` }}
         />
-      ))}
+      )}
 
       {/* ── Bottom support plate ── */}
       <rect

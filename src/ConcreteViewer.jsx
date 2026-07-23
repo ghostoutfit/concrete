@@ -98,7 +98,7 @@ export default function ConcreteViewer() {
         </div>
         <div className="macro-thumb">
           <span className="panel-title">Macro</span>
-          <MacroPanel phase={phase} force={force} sandPct={sandPct} />
+          <MacroPanel phase={phase} force={force} sandPct={sandPct} layoutSeed={layoutSeed} />
         </div>
       </header>
 
