@@ -1,31 +1,35 @@
 const DEFORM = { 0: 0.35, 20: 0.70, 40: 1.0, 60: 0.85, 80: 1.25 }
 
+// All cracks originate at [0.5, 0] — centre of the punch-plate contact — and
+// propagate downward.  Patterns vary by sand%: brittle splits vs. shear cones.
 const CRACKS = {
-  0: [
-    { pts: [[0, 0.42], [1, 0.42]], delay: 0,  w: 2.0 },
-    { pts: [[0.63, 0], [0.63, 0.42]], delay: 40, w: 1.5 },
+  0: [  // pure cement paste — vertical splitting failure
+    { pts: [[0.5, 0], [0.50, 1.00]], delay: 0,   w: 2.5 },
+    { pts: [[0.5, 0], [0.14, 1.00]], delay: 80,  w: 1.5 },
+    { pts: [[0.5, 0], [0.86, 1.00]], delay: 80,  w: 1.5 },
   ],
-  20: [
-    { pts: [[0.22, 0.05], [0.78, 0.93]], delay: 0,   w: 2.5 },
-    { pts: [[0.52, 0.51], [0.88, 0.72]], delay: 110, w: 1.8 },
+  20: [  // slightly tortuous diagonal shear
+    { pts: [[0.5, 0], [0.18, 0.95]], delay: 0,   w: 2.5 },
+    { pts: [[0.5, 0], [0.82, 0.90]], delay: 110, w: 1.8 },
   ],
-  40: [
-    { pts: [[0.72, 0.03], [0.28, 0.97]], delay: 0, w: 3.0 },
+  40: [  // peak-strength mix — classic shear-cone failure
+    { pts: [[0.5, 0], [0.05, 0.95]], delay: 0,  w: 3.0 },
+    { pts: [[0.5, 0], [0.95, 0.95]], delay: 40, w: 2.5 },
   ],
-  60: [
-    { pts: [[0.47, 0.07], [0.08, 0.50]], delay: 0,   w: 2.0 },
-    { pts: [[0.56, 0.05], [0.94, 0.52]], delay: 80,  w: 2.0 },
-    { pts: [[0.12, 0.47], [0.48, 0.93]], delay: 130, w: 1.8 },
-    { pts: [[0.54, 0.58], [0.82, 0.90]], delay: 170, w: 1.5 },
+  60: [  // excess aggregate — cone + secondary splits
+    { pts: [[0.5, 0], [0.08, 0.55]], delay: 0,   w: 2.0 },
+    { pts: [[0.5, 0], [0.92, 0.50]], delay: 80,  w: 2.0 },
+    { pts: [[0.5, 0], [0.22, 1.00]], delay: 130, w: 1.8 },
+    { pts: [[0.5, 0], [0.78, 1.00]], delay: 170, w: 1.5 },
   ],
-  80: [
-    { pts: [[0.33, 0.22], [0.02, 0.04]], delay: 0,  w: 1.5 },
-    { pts: [[0.33, 0.22], [0.06, 0.54]], delay: 28, w: 1.5 },
-    { pts: [[0.33, 0.22], [0.40, 0.97]], delay: 52, w: 1.5 },
-    { pts: [[0.62, 0.65], [0.97, 0.10]], delay: 38, w: 1.5 },
-    { pts: [[0.62, 0.65], [0.96, 0.93]], delay: 65, w: 1.5 },
-    { pts: [[0.62, 0.65], [0.54, 0.97]], delay: 92, w: 1.5 },
-    { pts: [[0.45, 0.45], [0.60, 0.25]], delay: 75, w: 1.2 },
+  80: [  // weak paste — many short cracks radiating from punch zone
+    { pts: [[0.5, 0], [0.32, 0.45]], delay: 0,  w: 1.5 },
+    { pts: [[0.5, 0], [0.68, 0.40]], delay: 28, w: 1.5 },
+    { pts: [[0.5, 0], [0.22, 0.80]], delay: 52, w: 1.5 },
+    { pts: [[0.5, 0], [0.72, 0.75]], delay: 38, w: 1.5 },
+    { pts: [[0.5, 0], [0.42, 1.00]], delay: 65, w: 1.5 },
+    { pts: [[0.5, 0], [0.58, 1.00]], delay: 75, w: 1.2 },
+    { pts: [[0.5, 0], [0.15, 0.55]], delay: 92, w: 1.2 },
   ],
 }
 

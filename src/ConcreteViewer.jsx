@@ -11,6 +11,8 @@ export default function ConcreteViewer() {
   const [sandPct, setSandPct] = useState(40)
   const [phase, setPhase] = useState('idle')   // 'idle' | 'testing' | 'failed'
   const [force, setForce] = useState(0)
+  const [layoutSeed, setLayoutSeed] = useState(0)
+  const [separationMode, setSeparationMode] = useState('shift')
   const rafRef = useRef(null)
   const startTimeRef = useRef(null)
 
@@ -32,6 +34,7 @@ export default function ConcreteViewer() {
     setSandPct(pct)
     setPhase('idle')
     setForce(0)
+    setLayoutSeed(s => s + 1)
   }
 
   useEffect(() => {
@@ -83,6 +86,15 @@ export default function ConcreteViewer() {
           >
             Reset
           </button>
+          <div className="toolbar-divider" />
+          <span className="toolbar-label">sep</span>
+          {['shift', 'squish'].map(m => (
+            <button
+              key={m}
+              className={`preset-btn ${separationMode === m ? 'active' : ''}`}
+              onClick={() => setSeparationMode(m)}
+            >{m}</button>
+          ))}
         </div>
         <div className="macro-thumb">
           <span className="panel-title">Macro</span>
@@ -92,7 +104,7 @@ export default function ConcreteViewer() {
 
       <main className="micro-section">
         <span className="panel-title">Micro</span>
-        <MicroPanel sandPct={sandPct} />
+        <MicroPanel sandPct={sandPct} phase={phase} layoutSeed={layoutSeed} separationMode={separationMode} />
       </main>
     </div>
   )

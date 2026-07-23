@@ -187,14 +187,32 @@ body {
   font-family: system-ui, sans-serif;
 }
 
-/* ── crack animation ── */
+/* ── crack animations ── */
+@keyframes draw-crack {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* macro cracks: fast (400ms), staggered per segment */
 .crack {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation: draw-crack 0.4s ease-out forwards;
 }
 
-@keyframes draw-crack {
-  from { stroke-dashoffset: 1; }
-  to   { stroke-dashoffset: 0; }
+/* micro crack: slightly slower (520ms) so the path is legible */
+.micro-crack {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-crack 0.52s ease-in-out forwards;
+}
+
+/* ── particle thermal jitter ── */
+@keyframes particle-jitter {
+  0%   { transform: translate(0, 0); }
+  20%  { transform: translate(var(--j1x), var(--j1y)); }
+  40%  { transform: translate(var(--j2x), var(--j2y)); }
+  60%  { transform: translate(var(--j3x), var(--j3y)); }
+  80%  { transform: translate(var(--j4x), var(--j4y)); }
+  100% { transform: translate(0, 0); }
 }
