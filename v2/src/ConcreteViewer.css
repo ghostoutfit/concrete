@@ -1,0 +1,218 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: #1a1a1a;
+  color: #e8e4df;
+  font-family: system-ui, sans-serif;
+}
+
+.viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── top bar ── */
+.top-bar {
+  display: flex;
+  align-items: stretch;
+  height: 15vh;
+  min-height: 80px;
+  background: #242424;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+  flex: 1;
+}
+
+.toolbar-label {
+  font-size: 13px;
+  color: #999;
+  margin-right: 4px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: #3a3a3a;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ── sand preset buttons ── */
+.preset-btn {
+  padding: 4px 14px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: #2e2e2e;
+  color: #ccc;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.preset-btn:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+
+.preset-btn.active {
+  background: #5a7fa8;
+  border-color: #5a7fa8;
+  color: #fff;
+}
+
+/* ── test / reset buttons ── */
+.action-btn {
+  padding: 5px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.test-btn {
+  background: #3a7a3a;
+  color: #fff;
+}
+
+.test-btn:hover:not(:disabled) {
+  background: #489048;
+}
+
+.reset-btn {
+  background: #2e2e2e;
+  color: #bbb;
+  border: 1px solid #444;
+}
+
+.reset-btn:hover:not(:disabled) {
+  background: #3a3a3a;
+  color: #fff;
+}
+
+/* ── macro thumbnail ── */
+.macro-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 12px 4px;
+  border-left: 1px solid #333;
+  width: 200px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.macro-thumb .panel-svg {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── micro section ── */
+.micro-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
+.micro-section .panel-svg {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── shared ── */
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #777;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+
+.panel-svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.dim-label {
+  font-size: 11px;
+  fill: #666;
+  font-family: system-ui, sans-serif;
+}
+
+.force-value-num {
+  font-size: 22px;
+  fill: #d4a060;
+  font-family: system-ui, sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.force-value-unit {
+  font-size: 10px;
+  fill: #888;
+  font-family: system-ui, sans-serif;
+  letter-spacing: 0.05em;
+}
+
+.micro-legend {
+  font-size: 11px;
+  fill: #888;
+  font-family: system-ui, sans-serif;
+}
+
+/* ── crack animations ── */
+@keyframes draw-crack {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* macro cracks: fast (400ms), staggered per segment */
+.crack {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-crack 0.4s ease-out forwards;
+}
+
+/* micro crack: slightly slower (520ms) so the path is legible */
+.micro-crack {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-crack 0.52s ease-in-out forwards;
+}
+
+/* ── particle thermal jitter ── */
+@keyframes particle-jitter {
+  0%   { transform: translate(0, 0); }
+  20%  { transform: translate(var(--j1x), var(--j1y)); }
+  40%  { transform: translate(var(--j2x), var(--j2y)); }
+  60%  { transform: translate(var(--j3x), var(--j3y)); }
+  80%  { transform: translate(var(--j4x), var(--j4y)); }
+  100% { transform: translate(0, 0); }
+}
