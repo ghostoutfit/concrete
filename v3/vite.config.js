@@ -1,12 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/concrete/v1/',
+  base: '/concrete/v3/',
   build: {
-    outDir: '../public/v1',
+    outDir: '../public/v3',
     emptyOutDir: true,
   },
 })

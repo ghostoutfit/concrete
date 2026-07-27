@@ -1,35 +1,6 @@
-import { useMemo } from 'react'
-
 const DEFORM = { 0: 0.35, 20: 0.70, 40: 1.0, 60: 0.85, 80: 1.25 }
 
-const CRACK_CFG = {
-   0: { nSegs:  1, dev: 0.00 },
-  20: { nSegs:  3, dev: 0.06 },
-  40: { nSegs:  7, dev: 0.13 },
-  60: { nSegs: 11, dev: 0.20 },
-  80: { nSegs: 17, dev: 0.28 },
-}
-
-function makeRand(seed) {
-  let s = (seed * 1664525 + 1013904223) >>> 0
-  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 0x100000000 }
-}
-
-function generateCrack(sandPct, seed) {
-  const { nSegs, dev } = CRACK_CFG[sandPct] ?? CRACK_CFG[40]
-  if (nSegs <= 1) return [[0.5, 0], [0.5, 1.0]]
-  const rand = makeRand(seed)
-  const pts = [[0.5, 0]]
-  let x = 0.5
-  for (let i = 1; i <= nSegs; i++) {
-    x += (rand() - 0.5) * dev * 2
-    x = Math.max(0.06, Math.min(0.94, x))
-    pts.push([x, i / nSegs])
-  }
-  return pts
-}
-
-export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, layoutSeed = 0 }) {
+export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, crackPts = [] }) {
   const blockW = 160
   const blockH = 90
   const plateH = 14
@@ -64,12 +35,9 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
   const vbBottom = cy + blockH / 2 + plateH + 16
   const viewBox  = `${vbLeft} ${vbTop} ${vbRight - vbLeft} ${vbBottom - vbTop}`
 
-  const crackPts = useMemo(
-    () => generateCrack(sandPct, layoutSeed * 7919 + sandPct * 137),
-    [sandPct, layoutSeed]
-  )
-
+  // Map normalised [0–1, 0–1] waypoints onto the current (possibly deformed) block
   function blockPath(pts) {
+    if (!pts.length) return ''
     return pts.map(([xn, yn], i) => {
       const x = (blockX + xn * currentBlockW).toFixed(1)
       const y = (blockY + yn * currentBlockH).toFixed(1)
@@ -77,7 +45,7 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
     }).join(' ')
   }
 
-  const forceKN = Math.round(force * 1200)
+  const forceKN   = Math.round(force * 1200)
   const sliderVal = Math.round(force * 100)
 
   return (
@@ -142,8 +110,8 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
           />
         ))}
 
-        {/* Crack */}
-        {phase === 'failed' && (
+        {/* Crack — same geometry as micro panel, scaled to block coords */}
+        {phase === 'failed' && crackPts.length > 0 && (
           <path
             d={blockPath(crackPts)}
             stroke="#1c1c1c"

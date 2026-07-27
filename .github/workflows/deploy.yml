@@ -21,18 +21,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: v2/package-lock.json
+
+      # Install dependencies for each app
+      - run: npm ci
+        working-directory: v1
       - run: npm ci
         working-directory: v2
+      - run: npm ci
+        working-directory: v3
+      - run: npm ci
+
+      # Build v1 → public/v1, v2 → public/v2, v3 → public/v3
+      - run: npm run build
+        working-directory: v1
       - run: npm run build
         working-directory: v2
+      - run: npm run build
+        working-directory: v3
+
+      # Build root landing page — picks up public/v1, v2, v3 automatically
+      - run: npm run build
+
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: v2/dist
+          path: dist
       - uses: actions/deploy-pages@v4
         id: deployment

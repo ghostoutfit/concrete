@@ -1,7 +1,7 @@
 import { useMemo, useRef, useEffect } from 'react'
 
-const VW = 600
-const VH = 350
+export const VW = 600
+export const VH = 350
 const MATRIX_SPACING = 16
 const H_STEP = MATRIX_SPACING * 2
 const V_STEP = MATRIX_SPACING
@@ -23,6 +23,7 @@ const PUNCH_RAMP      = 0.04   // SVG units per frame
 const VISUAL_SCALE    = 5      // amplify displacements for visibility (educational exaggeration)
 const SETTLE_VEL      = 0.08
 const SETTLE_FRAMES   = 15
+const FORCE_RAMP_RATE = 0.004  // per frame — ~4s to reach full force at 60fps
 
 // Bond spring constants and break strains
 const BOND_K = {
@@ -77,10 +78,35 @@ function strainBucket(strain, breakStrain) {
   return Math.min(10, Math.floor(Math.abs(strain) / breakStrain * 10))
 }
 
-// ── Micro crack routing (ported from v1) ──────────────────────
-// Greedy top→bottom sweep: at each grain that blocks curX, deflect to
-// whichever side is closer. Produces a path that routes AROUND grains,
-// illustrating that cracks propagate through the weaker cement matrix.
+// ── Crack fault-line constants ─────────────────────────────────
+// The crack path is predetermined from grain geometry (v1 algorithm).
+// Bonds within FAULT_CORRIDOR px of the path are pre-weakened so the
+// fault activates under any load — even a small force strains fault
+// bonds visibly while bulk bonds stay near-zero.
+const FAULT_CORRIDOR    = 18    // px half-width of weak zone
+const FAULT_K_FACTOR    = 0.30  // fault bonds 70% softer → stretch more per unit load
+const FAULT_BREAK_FACTOR = 0.40  // fault bonds break at 40% of normal strain
+
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay
+  const lenSq = dx * dx + dy * dy
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay)
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+}
+
+function distToPath(px, py, waypoints) {
+  let minD = Infinity
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const a = waypoints[i], b = waypoints[i + 1]
+    minD = Math.min(minD, distToSegment(px, py, a.x, a.y, b.x, b.y))
+  }
+  return minD
+}
+
+// ── Micro crack routing ────────────────────────────────────────
+// Returns waypoints array [{x,y}] — used both for bond pre-weakening
+// and for SVG rendering via smoothPath.
 function smoothPath(pts) {
   if (pts.length < 2) return ''
   let d = `M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`
@@ -94,17 +120,18 @@ function smoothPath(pts) {
   return d
 }
 
-function buildCrackPath(grains) {
+export function buildCrackWaypoints(grains) {
   const midX = VW / 2
+  const waypoints = [{ x: midX, y: 0 }]
   if (grains.length === 0) {
-    return `M ${midX},0 L ${midX},${VH}`
+    waypoints.push({ x: midX, y: VH })
+    return waypoints
   }
   const margin = 10
   const obs = grains.map(g => ({
     x1: g.x - margin, y1: g.y - margin,
     x2: g.x + g.w + margin, y2: g.y + g.h + margin,
   }))
-  const waypoints = [{ x: midX, y: 0 }]
   let curX = midX, curY = 0
   for (let iters = 0; curY < VH && iters < 300; iters++) {
     const next = obs
@@ -123,7 +150,7 @@ function buildCrackPath(grains) {
     curX = routeX
   }
   waypoints.push({ x: curX, y: VH })
-  return smoothPath(waypoints)
+  return waypoints
 }
 
 // ── Seeded PRNG ────────────────────────────────────────────────
@@ -149,7 +176,7 @@ function grainDims(siCols, siRows) {
   }
 }
 
-function buildGrains(sandPct, seed) {
+export function buildGrains(sandPct, seed) {
   const cfg = GRAIN_CFG[sandPct]
   if (!cfg || cfg.count === 0) return []
   const rand = makeRand(seed)
@@ -224,7 +251,7 @@ function buildIons(grains) {
 }
 
 // ── Physics engine ─────────────────────────────────────────────
-function buildPhysics(ions, grains, lattices, calcScope) {
+function buildPhysics(ions, grains, lattices, calcScope, crackWaypoints) {
   const punchX = VW / 2
   const punchContactHW = 32   // half-width of punch contact zone
 
@@ -271,8 +298,10 @@ function buildPhysics(ions, grains, lattices, calcScope) {
       case 'top-half':
         inScope = p.y < VH / 2
         break
-      case 'circular':
-        inScope = Math.hypot(p.x - punchX, p.y) < 10 * MATRIX_SPACING
+      case 'crack-zone':
+        // Particles within 10 atom-spacings of the crack fault path.
+        // Only these atoms move — shows two blocks shearing past each other.
+        inScope = distToPath(p.x0, p.y0, crackWaypoints) < 10 * MATRIX_SPACING
         break
       default:
         inScope = true
@@ -313,21 +342,28 @@ function buildPhysics(ions, grains, lattices, calcScope) {
       if (!bondType) continue
 
       // Pre-weaken matrix bonds at the punch-face only (y0 < 3×SPACING = 48).
-      // This targets the punch→first-free interface bonds (punch y=40 → free y=56).
-      // cs bonds are NOT pre-weakened — crack runs through matrix, not grain interface.
       const nearPunch = bondType !== 'cs' &&
         ((pi.y < MATRIX_SPACING * 3 && Math.abs(pi.x - punchX) < punchContactHW * 1.5) ||
          (pj.y < MATRIX_SPACING * 3 && Math.abs(pj.x - punchX) < punchContactHW * 1.5))
-      const effectiveBreak = nearPunch ? BOND_BREAK[bondType] * 0.55 : BOND_BREAK[bondType]
+      const punchBreak = nearPunch ? BOND_BREAK[bondType] * 0.55 : BOND_BREAK[bondType]
+
+      // Pre-weaken bonds along the predetermined crack fault path.
+      // Grain internal bonds (ss) are excluded — the crack runs through matrix only.
+      // Softer K means fault bonds deform more than bulk bonds at the same load,
+      // making them visibly strained even at low force levels.
+      const midBx = (pi.x0 + pj.x0) / 2
+      const midBy = (pi.y0 + pj.y0) / 2
+      const onFault = bondType !== 'ss' && distToPath(midBx, midBy, crackWaypoints) < FAULT_CORRIDOR
 
       bonds.push({
         i, j,
         restLen: d,
-        k: BOND_K[bondType],
-        breakStrain: effectiveBreak,
+        k:          onFault ? BOND_K[bondType] * FAULT_K_FACTOR    : BOND_K[bondType],
+        breakStrain: onFault ? punchBreak * FAULT_BREAK_FACTOR       : punchBreak,
         strain: 0,
         broken: false,
         type: bondType,
+        isFault: onFault,
       })
     }
   }
@@ -398,7 +434,7 @@ function stepPhysics(phys, forceVal) {
 }
 
 // ── Canvas scene rendering (atoms + bonds at physics positions) ──
-function drawScene(canvas, phys) {
+function drawScene(canvas, phys, crackFraction, crackWaypoints) {
   if (!canvas) return
   const dpr = window.devicePixelRatio || 1
   const W   = canvas.clientWidth
@@ -464,6 +500,38 @@ function drawScene(canvas, phys) {
   }
   ctx.globalAlpha = 1
 
+  // ── Progressive crack path (draws top→bottom as fault bonds break) ──
+  if (crackFraction > 0.01 && crackWaypoints?.length > 1) {
+    const totalLen = crackWaypoints.reduce((sum, pt, i) =>
+      i === 0 ? 0 : sum + Math.hypot(pt.x - crackWaypoints[i-1].x, pt.y - crackWaypoints[i-1].y), 0)
+    const target = crackFraction * totalLen
+
+    ctx.strokeStyle = 'rgba(25, 15, 15, 0.80)'
+    ctx.lineWidth = 2.5
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.beginPath()
+    ctx.moveTo(crackWaypoints[0].x, crackWaypoints[0].y)
+    let drawn = 0
+    for (let i = 1; i < crackWaypoints.length; i++) {
+      const segLen = Math.hypot(
+        crackWaypoints[i].x - crackWaypoints[i-1].x,
+        crackWaypoints[i].y - crackWaypoints[i-1].y
+      )
+      if (drawn + segLen >= target) {
+        const t = (target - drawn) / segLen
+        ctx.lineTo(
+          crackWaypoints[i-1].x + t * (crackWaypoints[i].x - crackWaypoints[i-1].x),
+          crackWaypoints[i-1].y + t * (crackWaypoints[i].y - crackWaypoints[i-1].y)
+        )
+        break
+      }
+      ctx.lineTo(crackWaypoints[i].x, crackWaypoints[i].y)
+      drawn += segLen
+    }
+    ctx.stroke()
+  }
+
   ctx.setTransform(1, 0, 0, 1, 0, 0)
 }
 
@@ -501,27 +569,58 @@ function LegendDot({ cx, cy, r, fill, label }) {
   )
 }
 
+// ── Breakthrough detection ─────────────────────────────────────
+// Divides the active zone into vertical strips and checks that every
+// strip contains at least one broken fault bond. This is more robust
+// than a BFS chain because horizontal routing sections (crack detouring
+// around a grain top) don't break under vertical compression — but the
+// vertical segments beside each grain do, so strip coverage still works.
+function hasBreakthroughPath(bonds, particles) {
+  const faultBroken = bonds.filter(b => b.isFault && b.broken)
+  if (faultBroken.length === 0) return false
+
+  const TOP_Y  = MATRIX_SPACING * 5          // 80 px — below punch zone
+  const BOT_Y  = VH - MATRIX_SPACING * 4     // 286 px — above fixed base
+  const STRIPS = 4
+  const stripH = (BOT_Y - TOP_Y) / STRIPS
+
+  const covered = new Array(STRIPS).fill(false)
+  for (const b of faultBroken) {
+    const midY = (particles[b.i].y0 + particles[b.j].y0) / 2
+    if (midY < TOP_Y || midY > BOT_Y) continue
+    const strip = Math.min(STRIPS - 1, Math.floor((midY - TOP_Y) / stripH))
+    covered[strip] = true
+  }
+  // Top-half breakthrough: strips 0 and 1 covered (y = TOP_Y to midpoint).
+  // Deep bonds see little stress from a narrow punch (stress bulb), so only
+  // requiring top-half coverage matches real fracture initiation behaviour.
+  return covered[0] && covered[1]
+}
+
 // ── MicroPanel component ───────────────────────────────────────
-export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, calcScope = 'everything', onSettled }) {
-  const grains    = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
-  const ions      = useMemo(() => buildIons(grains), [grains])
-  const lattices  = useMemo(() => grains.map(buildLattice), [grains])
-  const crackD    = useMemo(() => buildCrackPath(grains), [grains])
+export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, calcScope = 'everything', crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
+  const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
+  const ions               = useMemo(() => buildIons(grains), [grains])
+  const lattices           = useMemo(() => grains.map(buildLattice), [grains])
+  const crackWaypointsSelf = useMemo(() => buildCrackWaypoints(grains), [grains])
+  const crackWaypoints     = crackWaypointsProp ?? crackWaypointsSelf
+  const crackD             = useMemo(() => smoothPath(crackWaypoints), [crackWaypoints])
 
   const svgRef    = useRef(null)
   const canvasRef = useRef(null)
   const physRef   = useRef(null)
   const rafRef    = useRef(null)
-  const forceRef  = useRef(force)
-  const stableRef = useRef(0)   // consecutive stable frames
+  const forceRef     = useRef(force)
+  const dispForceRef = useRef(0)    // animated ramp: 0 → forceRef.current
+  const stableRef    = useRef(0)    // consecutive stable frames
 
   // Keep forceRef in sync with prop (picked up inside RAF without restart)
   useEffect(() => { forceRef.current = force }, [force])
 
   // Rebuild physics whenever layout or scope changes
   useEffect(() => {
-    physRef.current = buildPhysics(ions, grains, lattices, calcScope)
-  }, [ions, grains, lattices, calcScope])
+    physRef.current = buildPhysics(ions, grains, lattices, calcScope, crackWaypoints)
+  }, [ions, grains, lattices, calcScope, crackWaypoints])
 
   // RAF loop: run when testing, stop otherwise
   useEffect(() => {
@@ -529,8 +628,9 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 
     if (phase === 'idle') {
       // Reset physics to rest positions and clear canvas
-      physRef.current = buildPhysics(ions, grains, lattices, calcScope)
+      physRef.current = buildPhysics(ions, grains, lattices, calcScope, crackWaypoints)
       stableRef.current = 0
+      dispForceRef.current = 0
       const canvas = canvasRef.current
       if (canvas) {
         const ctx = canvas.getContext('2d')
@@ -539,9 +639,10 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       return
     }
 
-    if (phase !== 'testing') return  // 'settled' — keep canvas as-is, no RAF
+    if (phase !== 'testing') return  // 'settled'/'failed' — keep canvas as-is
 
     stableRef.current = 0
+    dispForceRef.current = 0   // always ramp from zero so crack forms as animation
     let frameCount = 0
     let prevBroken = 0
 
@@ -549,23 +650,39 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       const phys = physRef.current
       if (!phys) return
 
-      const maxV = stepPhysics(phys, forceRef.current)
-      drawScene(canvasRef.current, phys)
+      // Ramp displayed force from 0 toward slider value each frame
+      dispForceRef.current = Math.min(forceRef.current, dispForceRef.current + FORCE_RAMP_RATE)
 
+      const maxV = stepPhysics(phys, dispForceRef.current)
+
+      // Crack fraction: fraction of non-ss fault bonds broken → drives partial crack draw
+      const faultBonds  = phys.bonds.filter(b => b.isFault && b.type !== 'ss')
+      const faultBroken = faultBonds.filter(b => b.broken).length
+      const crackFraction = faultBonds.length > 0 ? faultBroken / faultBonds.length : 0
+
+      drawScene(canvasRef.current, phys, crackFraction, crackWaypoints)
       frameCount++
 
-      // Settled detection: low velocity + no new broken bonds for N frames
       const brokenNow = phys.bonds.filter(b => b.broken).length
-      if (brokenNow > prevBroken || maxV > SETTLE_VEL) {
+      const newBreaks  = brokenNow > prevBroken
+
+      // Check for through-crack whenever new bonds break
+      if (newBreaks && hasBreakthroughPath(phys.bonds, phys.particles)) {
+        onFailed?.()
+        return
+      }
+
+      if (newBreaks || maxV > SETTLE_VEL) {
         stableRef.current = 0
-        prevBroken = brokenNow
       } else {
         stableRef.current++
       }
+      prevBroken = brokenNow
 
-      // Only settle after punch has actually traveled — prevents instant settle at force=0
-      const atTarget = Math.abs(phys.currentDisp - forceRef.current * MAX_PUNCH_DISP) < 0.05
-      if (frameCount > 30 && stableRef.current >= SETTLE_FRAMES && phys.currentDisp > 0.1 && atTarget) {
+      // Only settle after force has fully ramped AND system is stable
+      const forceFullyRamped = dispForceRef.current >= forceRef.current - 0.001
+      const atTarget = Math.abs(phys.currentDisp - dispForceRef.current * MAX_PUNCH_DISP) < 0.05
+      if (frameCount > 30 && stableRef.current >= SETTLE_FRAMES && phys.currentDisp > 0.1 && atTarget && forceFullyRamped) {
         onSettled?.()
         return
       }
