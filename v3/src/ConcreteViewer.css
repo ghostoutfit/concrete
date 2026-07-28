@@ -112,6 +112,29 @@ body {
   color: #fff;
 }
 
+.replay-btn {
+  background: #2e2e2e;
+  color: #a0b8d0;
+  border: 1px solid #3a5a78;
+}
+
+.replay-btn:hover:not(:disabled) {
+  background: #2a4a64;
+  color: #c8dff0;
+}
+
+/* ── speed slider ── */
+.speed-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.speed-slider {
+  width: 64px;
+  cursor: pointer;
+  accent-color: #888;
+}
+
 /* ── macro thumbnail ── */
 .macro-thumb {
   display: flex;

@@ -8,19 +8,16 @@ const V_STEP = MATRIX_SPACING
 const SI_PAD = MATRIX_SPACING / 2
 
 // ── Physics constants ──────────────────────────────────────────
-// Kinematic punch: slider sets target displacement; physics ramps to it.
-// Break strains are tuned so bonds color visibly and crack around force≈0.5–0.8.
-// Punch spans y0 < 3×SPACING (y=8,24,40). First free layer at y=56.
-// Chain: 17 free layers × rest=16 → 18 bonds in series → 288 SVG units.
-//   uniform strain = currentDisp / 288
-//   cc-near non-weakened (2.0%) → never breaks at MAX_PUNCH_DISP=5
-//   cc-near pre-weakened  (1.1%) → cracks at disp = 1.1% × 288 = 3.17 → 63% force
+// Horizontal tension: left edge fixed, right edge pulled rightward.
+// Models the top-surface tension zone of a cantilever near its fixed end.
+// Crack runs top-to-bottom through the fault corridor (same as compression,
+// but the driving force is horizontal stretch, not vertical squish).
 const GAMMA           = 0.003  // overdamped drag — equilibrates in <1 frame at this setting
 const SUBSTEPS        = 30
 const DT              = 1/60
-const MAX_PUNCH_DISP  = 8      // max punch travel in SVG units
+const MAX_PUNCH_DISP  = 12     // max total stretch (right-edge, top) in SVG units
 const PUNCH_RAMP      = 0.04   // SVG units per frame
-const VISUAL_SCALE    = 5      // amplify displacements for visibility (educational exaggeration)
+const VISUAL_SCALE    = 4      // amplify displacements for visibility (reduced so right edge stays on screen)
 const SETTLE_VEL      = 0.08
 const SETTLE_FRAMES   = 15
 const FORCE_RAMP_RATE = 0.004  // per frame — ~4s to reach full force at 60fps
@@ -85,7 +82,7 @@ function strainBucket(strain, breakStrain) {
 // bonds visibly while bulk bonds stay near-zero.
 const FAULT_CORRIDOR    = 18    // px half-width of weak zone
 const FAULT_K_FACTOR    = 0.30  // fault bonds 70% softer → stretch more per unit load
-const FAULT_BREAK_FACTOR = 0.40  // fault bonds break at 40% of normal strain
+const FAULT_BREAK_FACTOR = 0.20  // fault bonds break at 20% of normal strain — low enough to crack ~65% deep with kinematic field
 
 function distToSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay
@@ -201,10 +198,10 @@ export function buildGrains(sandPct, seed) {
     const rawX = cx + (rand() - 0.5) * cellW * 0.40 - w / 2
     const rawY = cy + (rand() - 0.5) * cellH * 0.40 - h / 2
     const x = Math.round(rawX / MATRIX_SPACING) * MATRIX_SPACING
-    // Clamp grains to y≥96 so top grain-Si is at y=104. Matrix rows above y=96 are
-    // unobstructed. cs bonds form LATERALLY (grain sides ↔ adjacent matrix at same depth)
-    // rather than vertically above the grain where compression would crush the chain.
-    const y = Math.max(Math.round(rawY / MATRIX_SPACING) * MATRIX_SPACING, MATRIX_SPACING * 6)
+    const crackX = VW / 2
+    const overlapsCrack = x < crackX + FAULT_CORRIDOR && x + w > crackX - FAULT_CORRIDOR
+    const minY = overlapsCrack ? MATRIX_SPACING : 0
+    const y = Math.max(Math.round(rawY / MATRIX_SPACING) * MATRIX_SPACING, minY)
     grains.push({ x, y, w, h, id: i, siCols, siRows })
   }
   return grains
@@ -252,8 +249,7 @@ function buildIons(grains) {
 
 // ── Physics engine ─────────────────────────────────────────────
 function buildPhysics(ions, grains, lattices, calcScope, crackWaypoints) {
-  const punchX = VW / 2
-  const punchContactHW = 32   // half-width of punch contact zone
+  const punchX = VW / 2   // used for stress-cone scope only
 
   // Build particle list: matrix ions first, then grain atoms
   const particles = []
@@ -291,27 +287,18 @@ function buildPhysics(ions, grains, lattices, calcScope, crackWaypoints) {
       case 'everything':
         inScope = true
         break
-      case 'stress-cone':
-        // 45° cone from punch centre, expanding downward
-        inScope = Math.abs(p.x - punchX) <= p.y + 1
-        break
-      case 'top-half':
-        inScope = p.y < VH / 2
-        break
       case 'crack-zone':
-        // Particles within 10 atom-spacings of the crack fault path.
-        // Only these atoms move — shows two blocks shearing past each other.
-        inScope = distToPath(p.x0, p.y0, crackWaypoints) < 10 * MATRIX_SPACING
+        // Within ~3 atom-spacings of the fault path (48 px each side)
+        inScope = distToPath(p.x0, p.y0, crackWaypoints) < MATRIX_SPACING * 3
         break
       default:
         inScope = true
     }
     p.inScope = inScope
-    // Fixed: grain atoms (rigid inclusions), bottom edge, or outside scope
-    p.fixed = p.isGrain || !inScope || p.y > VH - MATRIX_SPACING * 1.5
-    // Punch spans three particle rows (y0=8,24,40) — extends deep enough to
-    // avoid grain atoms at y=56 from blocking the load path.
-    p.isPunch = inScope && !p.fixed && p.y0 < MATRIX_SPACING * 3
+    // Fixed: left-edge anchor (the "held" end of the rubber band)
+    p.fixed = p.isGrain || !inScope || p.x0 < MATRIX_SPACING * 2
+    // Punch: right-edge particles — pulled rightward with height gradient
+    p.isPunch = inScope && !p.fixed && p.x0 > VW - MATRIX_SPACING * 2
   })
 
   // Build bonds
@@ -341,11 +328,7 @@ function buildPhysics(ions, grains, lattices, calcScope, crackWaypoints) {
 
       if (!bondType) continue
 
-      // Pre-weaken matrix bonds at the punch-face only (y0 < 3×SPACING = 48).
-      const nearPunch = bondType !== 'cs' &&
-        ((pi.y < MATRIX_SPACING * 3 && Math.abs(pi.x - punchX) < punchContactHW * 1.5) ||
-         (pj.y < MATRIX_SPACING * 3 && Math.abs(pj.x - punchX) < punchContactHW * 1.5))
-      const punchBreak = nearPunch ? BOND_BREAK[bondType] * 0.55 : BOND_BREAK[bondType]
+      const punchBreak = BOND_BREAK[bondType]
 
       // Pre-weaken bonds along the predetermined crack fault path.
       // Grain internal bonds (ss) are excluded — the crack runs through matrix only.
@@ -375,29 +358,26 @@ function buildPhysics(ions, grains, lattices, calcScope, crackWaypoints) {
   return { particles, bonds, n, matrixCount, fx, fy, currentDisp: 0 }
 }
 
-function stepPhysics(phys, forceVal) {
-  const { particles, bonds, n, fx, fy } = phys
-  const dt = DT / SUBSTEPS
+function stepPhysics(phys, forceVal, speed = 1) {
+  const { particles, bonds, n } = phys
 
-  // Distribute the punch ramp across substeps so the chain equilibrates
-  // incrementally. One big jump per frame causes the top bond to see
-  // ~10× too much strain transiently and break too early.
   const targetDisp = forceVal * MAX_PUNCH_DISP
   const gap = targetDisp - phys.currentDisp
-  const totalRamp = Math.sign(gap) * Math.min(PUNCH_RAMP, Math.abs(gap))
+  const totalRamp = Math.sign(gap) * Math.min(PUNCH_RAMP * speed, Math.abs(gap))
   const rampPerSub = totalRamp / SUBSTEPS
 
-  let maxV = 0
-
   for (let sub = 0; sub < SUBSTEPS; sub++) {
-    // Advance punch by one micro-step each substep
     phys.currentDisp += rampPerSub
-    for (let i = 0; i < n; i++) {
-      if (particles[i].isPunch) particles[i].y = particles[i].y0 + phys.currentDisp
-    }
-    fx.fill(0)
-    fy.fill(0)
 
+    // Pure kinematic rubber-band: every particle displaced rightward
+    // proportional to its x position (left=0, right=full) and height
+    // (top=full, bottom=0). No spring dynamics — strain is imposed directly.
+    for (let i = 0; i < n; i++) {
+      const p = particles[i]
+      p.x = p.x0 + phys.currentDisp * (p.x0 / VW) * Math.max(0, 1.0 - p.y0 / VH)
+    }
+
+    // Compute bond strains and break bonds that exceed threshold
     for (let b = 0; b < bonds.length; b++) {
       const bond = bonds[b]
       if (bond.broken) continue
@@ -408,33 +388,40 @@ function stepPhysics(phys, forceVal) {
       if (d < 0.001) continue
       const strain = (d - bond.restLen) / bond.restLen
       bond.strain = strain
-      if (Math.abs(strain) > bond.breakStrain) {
-        bond.broken = true
-        continue
-      }
-      const f = bond.k * (d - bond.restLen)
-      const nx = dx / d, ny = dy / d
-      if (!pi.fixed && !pi.isPunch) { fx[bond.i] += f * nx; fy[bond.i] += f * ny }
-      if (!pj.fixed && !pj.isPunch) { fx[bond.j] -= f * nx; fy[bond.j] -= f * ny }
-    }
-
-    for (let i = 0; i < n; i++) {
-      const p = particles[i]
-      if (p.fixed || p.isPunch) continue
-      const vx = fx[i] / GAMMA
-      const vy = fy[i] / GAMMA
-      p.x += vx * dt
-      p.y += vy * dt
-      const v = Math.hypot(vx, vy)
-      if (v > maxV) maxV = v
+      if (Math.abs(strain) > bond.breakStrain) bond.broken = true
     }
   }
 
-  return maxV
+  return 0  // no spring velocities; settle uses bond-break quiescence
+}
+
+// Seeded per-particle thermal jitter for canvas drawing.
+// Three superimposed sinusoids per axis with fully independent params.
+// Base frequencies are irrational-ratio so they never beat into a visible pattern.
+function canvasJitter(idx, t) {
+  function h(n) {
+    let v = (n ^ 0xdeadbeef) | 0
+    v = (((v >> 16) ^ v) * 0x45d9f3b) | 0
+    v = (((v >> 16) ^ v) * 0x45d9f3b) | 0
+    return ((v >> 16) ^ v) | 0
+  }
+  // stride 97 (prime) separates adjacent particle indices so they get unrelated hashes
+  const u = s => ((h(idx * 97 + s) >>> 0) & 0xFF) / 255
+
+  const TAU = Math.PI * 2
+  const jx =
+    (0.10 + u(0)  * 0.30) * Math.sin(TAU * (( 3.7 + u(1)  * 4.1) * t + u(2))) +
+    (0.06 + u(3)  * 0.18) * Math.sin(TAU * (( 7.3 + u(4)  * 2.9) * t + u(5))) +
+    (0.03 + u(6)  * 0.09) * Math.sin(TAU * ((13.1 + u(7)  * 1.7) * t + u(8)))
+  const jy =
+    (0.10 + u(9)  * 0.30) * Math.sin(TAU * (( 4.3 + u(10) * 3.7) * t + u(11))) +
+    (0.06 + u(12) * 0.18) * Math.sin(TAU * (( 8.1 + u(13) * 2.3) * t + u(14))) +
+    (0.03 + u(15) * 0.09) * Math.sin(TAU * ((11.7 + u(16) * 1.9) * t + u(17)))
+  return { jx, jy }
 }
 
 // ── Canvas scene rendering (atoms + bonds at physics positions) ──
-function drawScene(canvas, phys, crackFraction, crackWaypoints) {
+function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0) {
   if (!canvas) return
   const dpr = window.devicePixelRatio || 1
   const W   = canvas.clientWidth
@@ -458,6 +445,8 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints) {
   ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
 
   const { particles, bonds, matrixCount } = phys
+
+  const t = ts / 1000
 
   // Visual position: amplify displacement from rest for educational clarity
   const vx = p => p.x0 + (p.x - p.x0) * VISUAL_SCALE
@@ -489,11 +478,12 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints) {
     ctx.stroke()
   }
 
-  // ── Matrix atoms at amplified physics positions ─────────────────
+  // ── Matrix atoms at amplified physics positions + thermal jitter ──
   for (let i = 0; i < matrixCount; i++) {
     const p = particles[i]
+    const { jx, jy } = canvasJitter(i, t)
     ctx.beginPath()
-    ctx.arc(vx(p), vy(p), p.r, 0, Math.PI * 2)
+    ctx.arc(vx(p) + jx, vy(p) + jy, p.r, 0, Math.PI * 2)
     ctx.fillStyle = p.type === 'Ca' ? C.Ca : C.O
     ctx.globalAlpha = 0.85
     ctx.fill()
@@ -579,7 +569,7 @@ function hasBreakthroughPath(bonds, particles) {
   const faultBroken = bonds.filter(b => b.isFault && b.broken)
   if (faultBroken.length === 0) return false
 
-  const TOP_Y  = MATRIX_SPACING * 5          // 80 px — below punch zone
+  const TOP_Y  = MATRIX_SPACING * 5          // 80 px — below punch rows
   const BOT_Y  = VH - MATRIX_SPACING * 4     // 286 px — above fixed base
   const STRIPS = 4
   const stripH = (BOT_Y - TOP_Y) / STRIPS
@@ -591,14 +581,11 @@ function hasBreakthroughPath(bonds, particles) {
     const strip = Math.min(STRIPS - 1, Math.floor((midY - TOP_Y) / stripH))
     covered[strip] = true
   }
-  // Top-half breakthrough: strips 0 and 1 covered (y = TOP_Y to midpoint).
-  // Deep bonds see little stress from a narrow punch (stress bulb), so only
-  // requiring top-half coverage matches real fracture initiation behaviour.
   return covered[0] && covered[1]
 }
 
 // ── MicroPanel component ───────────────────────────────────────
-export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, calcScope = 'everything', crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
+export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, calcScope = 'everything', crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
   const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
   const ions               = useMemo(() => buildIons(grains), [grains])
   const lattices           = useMemo(() => grains.map(buildLattice), [grains])
@@ -611,11 +598,14 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
   const physRef   = useRef(null)
   const rafRef    = useRef(null)
   const forceRef     = useRef(force)
-  const dispForceRef = useRef(0)    // animated ramp: 0 → forceRef.current
-  const stableRef    = useRef(0)    // consecutive stable frames
+  const speedRef     = useRef(speed)
+  const dispForceRef    = useRef(0)   // animated ramp: 0 → forceRef.current
+  const stableRef       = useRef(0)   // consecutive stable frames
+  const crackFractionRef = useRef(0)  // last computed crack fraction, read by draw-only loop
 
-  // Keep forceRef in sync with prop (picked up inside RAF without restart)
+  // Keep refs in sync with props (picked up inside RAF without restart)
   useEffect(() => { forceRef.current = force }, [force])
+  useEffect(() => { speedRef.current = speed }, [speed])
 
   // Rebuild physics whenever layout or scope changes
   useEffect(() => {
@@ -631,6 +621,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       physRef.current = buildPhysics(ions, grains, lattices, calcScope, crackWaypoints)
       stableRef.current = 0
       dispForceRef.current = 0
+      crackFractionRef.current = 0
       const canvas = canvasRef.current
       if (canvas) {
         const ctx = canvas.getContext('2d')
@@ -639,28 +630,39 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       return
     }
 
-    if (phase !== 'testing') return  // 'settled'/'failed' — keep canvas as-is
+    if (phase === 'settled' || phase === 'failed') {
+      // Physics is frozen — keep redrawing so thermal jitter stays alive
+      function drawLoop(ts) {
+        drawScene(canvasRef.current, physRef.current, crackFractionRef.current, crackWaypoints, ts)
+        rafRef.current = requestAnimationFrame(drawLoop)
+      }
+      rafRef.current = requestAnimationFrame(drawLoop)
+      return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+    }
+
+    if (phase !== 'testing') return
 
     stableRef.current = 0
     dispForceRef.current = 0   // always ramp from zero so crack forms as animation
     let frameCount = 0
     let prevBroken = 0
 
-    function frame() {
+    function frame(ts) {
       const phys = physRef.current
       if (!phys) return
 
       // Ramp displayed force from 0 toward slider value each frame
-      dispForceRef.current = Math.min(forceRef.current, dispForceRef.current + FORCE_RAMP_RATE)
+      dispForceRef.current = Math.min(forceRef.current, dispForceRef.current + FORCE_RAMP_RATE * speedRef.current)
 
-      const maxV = stepPhysics(phys, dispForceRef.current)
+      const maxV = stepPhysics(phys, dispForceRef.current, speedRef.current)
 
       // Crack fraction: fraction of non-ss fault bonds broken → drives partial crack draw
       const faultBonds  = phys.bonds.filter(b => b.isFault && b.type !== 'ss')
       const faultBroken = faultBonds.filter(b => b.broken).length
       const crackFraction = faultBonds.length > 0 ? faultBroken / faultBonds.length : 0
+      crackFractionRef.current = crackFraction
 
-      drawScene(canvasRef.current, phys, crackFraction, crackWaypoints)
+      drawScene(canvasRef.current, phys, crackFraction, crackWaypoints, ts)
       frameCount++
 
       const brokenNow = phys.bonds.filter(b => b.broken).length
@@ -740,13 +742,6 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
             </g>
           ))}
 
-          {/* Legend */}
-          <g transform={`translate(10, ${VH - 18})`}>
-            <LegendDot cx={6}   cy={0} r={4} fill={C.Si} label="Si" />
-            <LegendDot cx={46}  cy={0} r={3} fill={C.O}  label="O (grain)" />
-            <LegendDot cx={115} cy={0} r={4} fill={C.Ca} label="Ca²⁺" />
-            <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="O²⁻" />
-          </g>
         </g>
       </svg>
 
@@ -760,13 +755,15 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
         }}
       />
 
-      {/* Crack overlay — only when specimen actually failed */}
-      {phase === 'failed' && (
-        <svg
-          viewBox={`0 0 ${VW} ${VH}`}
-          preserveAspectRatio="xMidYMid meet"
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-        >
+      {/* UI overlay: keys always on top of canvas; crack path when failed */}
+      <svg
+        viewBox={`0 0 ${VW} ${VH}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      >
+        {/* Red border matching the macro rectangle's aspect ratio */}
+        <rect x={3} y={3} width={VW - 6} height={VH - 6} fill="none" stroke="#cc2222" strokeWidth={6} />
+        {phase === 'failed' && (
           <path
             d={crackD}
             stroke="#1a1a1a"
@@ -777,8 +774,28 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
             pathLength="1"
             className="micro-crack"
           />
-        </svg>
-      )}
+        )}
+
+        {/* Particle key */}
+        <g transform={`translate(10, ${VH - 20})`}>
+          <rect x={-4} y={-11} width={200} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+          <LegendDot cx={6}   cy={0} r={4} fill={C.Si} label="Si" />
+          <LegendDot cx={46}  cy={0} r={3} fill={C.O}  label="O (grain)" />
+          <LegendDot cx={115} cy={0} r={4} fill={C.Ca} label="Ca²⁺" />
+          <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="O²⁻" />
+        </g>
+
+        {/* Electric field color key */}
+        <g transform={`translate(${VW - 178}, ${VH - 20})`}>
+          <rect x={-4} y={-11} width={174} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+          <text x={0} y={1} className="micro-legend">Electric field:</text>
+          {STRAIN_COLORS.slice(1).map((col, i) => (
+            <rect key={i} x={78 + i * 8} y={-9} width={8} height={12} fill={col} />
+          ))}
+          <text x={78} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>low</text>
+          <text x={162} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }} textAnchor="end">high</text>
+        </g>
+      </svg>
     </div>
   )
 }

@@ -1,139 +1,134 @@
-const DEFORM = { 0: 0.35, 20: 0.70, 40: 1.0, 60: 0.85, 80: 1.25 }
+const DEFORM = { 0: 0.30, 20: 0.55, 40: 0.80, 60: 0.65, 80: 1.10 }
 
 export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, crackPts = [] }) {
-  const blockW = 160
-  const blockH = 90
-  const plateH = 14
-  const punchW = 60
-  const cx     = 100
-  const cy     = 150
+  const beamL  = 160
+  const beamH  = 38
+  const wallW  = 18
+  const wallX  = 25
+  const beamX  = wallX + wallW
+  const tipX   = beamX + beamL
+  const beamY  = 72
+  const beamBotY = beamY + beamH
 
-  const maxArrowLen = 60
-  const arrowHeadH  = 12
-  const arrowHeadW  = 14
+  // Bending: tipDrop is the vertical deflection at the right end (only during/after test)
+  const deformFactor = DEFORM[sandPct] ?? 0.80
+  const maxTipDrop   = 14
+  const tipDrop      = phase === 'idle' ? 0 : force * maxTipDrop * deformFactor
 
-  const deformFactor  = DEFORM[sandPct] ?? 1.0
-  const compression   = force * 0.03 * deformFactor
-  const bulge         = compression * 0.20
+  // Cubic bezier control points — near-zero deflection at wall, full at tip
+  const cpX1  = beamX + beamL * 0.33
+  const cpX2  = beamX + beamL * 0.67
+  const topR  = beamY + tipDrop
+  const botR  = beamBotY + tipDrop
 
-  const currentBlockH = blockH * (1 - compression)
-  const currentBlockW = blockW * (1 + bulge)
+  const cpTopY1 = beamY    + tipDrop * 0.06
+  const cpTopY2 = beamY    + tipDrop * 0.52
+  const cpBotY1 = beamBotY + tipDrop * 0.06
+  const cpBotY2 = beamBotY + tipDrop * 0.52
 
-  const blockY       = cy - currentBlockH / 2
-  const blockX       = cx - currentBlockW / 2
-  const bottomPlateY = cy + currentBlockH / 2
+  const outline = [
+    `M ${beamX},${beamY}`,
+    `C ${cpX1},${cpTopY1} ${cpX2},${cpTopY2} ${tipX},${topR}`,
+    `L ${tipX},${botR}`,
+    `C ${cpX2},${cpBotY2} ${cpX1},${cpBotY1} ${beamX},${beamBotY}`,
+    'Z',
+  ].join(' ')
 
-  const punchY    = blockY - plateH
-  const arrowTip  = punchY
-  const arrowLen  = force * maxArrowLen
-  const arrowBase = arrowTip - arrowLen
+  // Force arrow — at right end, pointing down from above
+  const maxArrowLen = 36
+  const arrowHeadH  = 10
+  const arrowHeadW  = 12
+  const arrowLen    = force * maxArrowLen
+  const arrowTip    = topR
+  const arrowBase   = arrowTip - arrowLen - arrowHeadH
 
-  const initPunchY = cy - blockH / 2 - plateH
-  const vbTop    = initPunchY - maxArrowLen - 10
-  const vbLeft   = 0
-  const vbRight  = cx + blockW / 2 + 16
-  const vbBottom = cy + blockH / 2 + plateH + 16
-  const viewBox  = `${vbLeft} ${vbTop} ${vbRight - vbLeft} ${vbBottom - vbTop}`
+  // Red dot — crack initiation: top surface ~16% from fixed end
+  const dotFrac = 0.16
+  const dotX = beamX + beamL * dotFrac
+  const dotY = beamY  // near-zero deflection at this position
 
-  // Map normalised [0–1, 0–1] waypoints onto the current (possibly deformed) block
-  function blockPath(pts) {
-    if (!pts.length) return ''
-    return pts.map(([xn, yn], i) => {
-      const x = (blockX + xn * currentBlockW).toFixed(1)
-      const y = (blockY + yn * currentBlockH).toFixed(1)
-      return `${i === 0 ? 'M' : 'L'}${x},${y}`
-    }).join(' ')
-  }
+  // ViewBox
+  const vbL = 0
+  const vbR = tipX + 20
+  const vbT = beamY - maxArrowLen - arrowHeadH - 10
+  const vbB = beamBotY + maxTipDrop + 10
+  const viewBox = `${vbL} ${vbT} ${vbR - vbL} ${vbB - vbT}`
 
-  const forceKN   = Math.round(force * 1200)
+  // Macro crack: independent of micro coordinates — just a vertical line at the red dot
+  const macroCrackD = `M ${dotX.toFixed(1)},${beamY} L ${dotX.toFixed(1)},${(beamY + beamH * 0.70).toFixed(1)}`
+
+  const forceKN   = Math.round(force * 1500)
   const sliderVal = Math.round(force * 100)
 
   return (
     <div className="macro-panel-inner">
-      {/* Vertical force slider */}
       <div className="force-slider-col">
         <span className="force-kn-label">{forceKN}</span>
         <span className="force-kn-unit">kN</span>
         <input
-          type="range"
-          className="force-slider"
-          orient="vertical"
-          min={0}
-          max={100}
-          step={1}
-          value={sliderVal}
+          type="range" className="force-slider" orient="vertical"
+          min={0} max={100} step={1} value={sliderVal}
           onChange={e => onForceChange?.(Number(e.target.value) / 100)}
           disabled={phase === 'settled'}
         />
         <span className="force-slider-zero">0</span>
       </div>
 
-      {/* Macro SVG graphic */}
-      <svg
-        width="100%"
-        height="100%"
-        viewBox={viewBox}
-        preserveAspectRatio="xMidYMid meet"
-        className="panel-svg"
-      >
-        {/* Force arrow */}
-        {arrowLen > arrowHeadH && (
-          <line
-            x1={cx} y1={arrowBase}
-            x2={cx} y2={arrowTip - arrowHeadH + 1}
-            stroke="#d4813a" strokeWidth={5} strokeLinecap="round"
-          />
-        )}
-        <polygon
-          points={`${cx - arrowHeadW / 2},${arrowTip - arrowHeadH} ${cx + arrowHeadW / 2},${arrowTip - arrowHeadH} ${cx},${arrowTip}`}
-          fill="#d4813a"
-        />
+      <svg width="100%" height="100%" viewBox={viewBox} preserveAspectRatio="xMidYMid meet" className="panel-svg">
 
-        {/* Punch plate */}
-        <rect
-          x={cx - punchW / 2} y={punchY}
-          width={punchW} height={plateH}
-          fill="#666" rx={2}
-        />
-
-        {/* Concrete block */}
-        <rect
-          x={blockX} y={blockY}
-          width={currentBlockW} height={currentBlockH}
-          fill="#a8a09a" stroke="#7a7168" strokeWidth={1.5}
-        />
-        {[0.30, 0.65].map((t, i) => (
-          <line key={i}
-            x1={blockX + 8}                 y1={blockY + currentBlockH * t}
-            x2={blockX + currentBlockW - 8} y2={blockY + currentBlockH * t}
-            stroke="#8a8278" strokeWidth={0.8} opacity={0.4}
+        {/* Fixed wall + hatching */}
+        <rect x={wallX} y={beamY - 8} width={wallW} height={beamH + 16} fill="#555" rx={1} />
+        {[-3, -2, -1, 0, 1, 2, 3].map(k => (
+          <line key={k}
+            x1={wallX} y1={beamY + beamH / 2 + k * 8}
+            x2={wallX - 12} y2={beamY + beamH / 2 + k * 8 + 10}
+            stroke="#3a3a3a" strokeWidth={1.2} strokeLinecap="round"
           />
         ))}
 
-        {/* Crack — same geometry as micro panel, scaled to block coords */}
-        {phase === 'failed' && crackPts.length > 0 && (
+        {/* Beam body */}
+        <path d={outline} fill="#a8a09a" stroke="#7a7168" strokeWidth={1.5} />
+
+        {/* Internal texture lines, bent with beam */}
+        {[0.33, 0.67].map((t, i) => (
+          <path key={i}
+            d={`M ${beamX},${beamY + t * beamH} C ${cpX1},${cpTopY1 + t * (cpBotY1 - cpTopY1)} ${cpX2},${cpTopY2 + t * (cpBotY2 - cpTopY2)} ${tipX},${topR + t * beamH}`}
+            stroke="#8a8278" strokeWidth={0.8} fill="none" opacity={0.4}
+          />
+        ))}
+
+        {/* Force arrow at right tip */}
+        {arrowLen > 1 && (
+          <>
+            {arrowLen > arrowHeadH && (
+              <line
+                x1={tipX} y1={arrowBase}
+                x2={tipX} y2={arrowTip - arrowHeadH + 1}
+                stroke="#d4813a" strokeWidth={4} strokeLinecap="round"
+              />
+            )}
+            <polygon
+              points={`${tipX - arrowHeadW / 2},${arrowTip - arrowHeadH} ${tipX + arrowHeadW / 2},${arrowTip - arrowHeadH} ${tipX},${arrowTip}`}
+              fill="#d4813a"
+            />
+          </>
+        )}
+
+        {/* Crack at red dot when failed */}
+        {phase === 'failed' && (
           <path
-            d={blockPath(crackPts)}
-            stroke="#1c1c1c"
-            strokeWidth={2.5}
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            pathLength="1"
-            className="crack"
+            d={macroCrackD}
+            stroke="#1c1c1c" strokeWidth={2} fill="none"
+            strokeLinecap="round" pathLength="1" className="crack"
           />
         )}
 
-        {/* Bottom support plate */}
-        <rect
-          x={cx - blockW / 2 - 10} y={bottomPlateY}
-          width={blockW + 20} height={plateH}
-          fill="#555" rx={2}
-        />
+        {/* Tiny red rectangle — same 12:7 aspect ratio as the micro view */}
+        <rect x={dotX - 9} y={dotY - 5.25} width={18} height={10.5} fill="none" stroke="#cc2222" strokeWidth={2.25} />
 
         {phase === 'idle' && (
-          <text x={cx} y={vbBottom - 4} textAnchor="middle" className="dim-label">
-            150 × 300 mm
+          <text x={beamX + beamL / 2} y={vbB - 4} textAnchor="middle" className="dim-label">
+            150 × 2400 mm
           </text>
         )}
       </svg>

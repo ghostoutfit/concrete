@@ -1,22 +1,33 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import MacroPanel from './MacroPanel'
 import MicroPanel, { buildGrains, buildCrackWaypoints, VW, VH } from './MicroPanel'
 import './ConcreteViewer.css'
 
 const SAND_PRESETS = [0, 20, 40, 60, 80]
 const SCOPE_OPTIONS = [
-  { value: 'crack-zone',  label: '10 atoms from crack' },
   { value: 'everything',  label: 'Everything' },
-  { value: 'stress-cone', label: 'Stress cone' },
-  { value: 'top-half',    label: 'Top half' },
+  { value: 'crack-zone',  label: 'Near crack only' },
 ]
+const SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 
 export default function ConcreteViewer() {
   const [sandPct, setSandPct] = useState(40)
   const [phase, setPhase]     = useState('idle')  // 'idle'|'testing'|'settled'|'failed'
-  const [force, setForce]     = useState(0)
+  const [force, setForce]     = useState(1000 / 1500)
   const [layoutSeed, setLayoutSeed] = useState(0)
-  const [calcScope, setCalcScope]   = useState('crack-zone')
+  const [calcScope, setCalcScope]   = useState('everything')
+  const [speedIdx, setSpeedIdx]     = useState(2)  // index into SPEEDS; default 1.0×
+
+  const replayRef = useRef(false)
+
+  // After a replay-triggered idle reset, auto-start the test
+  useEffect(() => {
+    if (phase === 'idle' && replayRef.current) {
+      replayRef.current = false
+      const id = requestAnimationFrame(() => setPhase('testing'))
+      return () => cancelAnimationFrame(id)
+    }
+  }, [phase])
 
   // Compute grain layout + crack waypoints here so both panels share the same geometry
   const grains = useMemo(
@@ -33,6 +44,7 @@ export default function ConcreteViewer() {
 
   function startTest() { setPhase('testing') }
   function reset()     { setPhase('idle') }
+  function handleReplay() { replayRef.current = true; setPhase('idle') }
 
   function handleSandPct(pct) {
     setSandPct(pct)
@@ -40,9 +52,10 @@ export default function ConcreteViewer() {
     setLayoutSeed(s => s + 1)
   }
 
-  // Physics tells us the outcome — no hardcoded thresholds
   function handleFailed()  { setPhase('failed') }
   function handleSettled() { setPhase('settled') }
+
+  const speed = SPEEDS[speedIdx]
 
   return (
     <div className="viewer">
@@ -64,6 +77,20 @@ export default function ConcreteViewer() {
             onClick={reset} disabled={phase === 'idle'}>
             Reset
           </button>
+          <button className="action-btn replay-btn"
+            onClick={handleReplay} disabled={phase === 'idle' || phase === 'testing'}>
+            Replay
+          </button>
+          <div className="toolbar-divider" />
+          <span className="toolbar-label speed-icon">🐢</span>
+          <input
+            type="range"
+            className="speed-slider"
+            min={0} max={4} step={1}
+            value={speedIdx}
+            onChange={e => setSpeedIdx(Number(e.target.value))}
+          />
+          <span className="toolbar-label speed-icon">🐇</span>
           <div className="toolbar-divider" />
           <span className="toolbar-label">Scope</span>
           <select className="scope-select" value={calcScope}
@@ -92,6 +119,7 @@ export default function ConcreteViewer() {
           phase={phase}
           layoutSeed={layoutSeed}
           force={force}
+          speed={speed}
           calcScope={calcScope}
           crackWaypoints={crackWaypoints}
           onSettled={handleSettled}
