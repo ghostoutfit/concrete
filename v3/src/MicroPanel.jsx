@@ -725,11 +725,8 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     const g = grains[gi]
     const rep = grainParticles[gi]?.[0]
     const grainDx = rep !== undefined ? xs[rep] - particles[rep].x0 : 0
-    ctx.strokeStyle = C.stroke
-    ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.roundRect(g.x + grainDx, g.y, g.w, g.h, 3)
-    ctx.stroke()
   }
 
   // ── Bonds ── (skip bonds that span the crack — one end shifted, other not)
@@ -973,7 +970,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
           {grains.map((g, gi) => (
             <g key={g.id}>
               <rect x={g.x} y={g.y} width={g.w} height={g.h}
-                fill="none" stroke={C.stroke} strokeWidth={1.5} rx={3} />
+                fill="none" stroke="none" rx={3} />
               {phase === 'idle' && lattices[gi].map((node, ni) => (
                 <circle key={ni}
                   cx={node.x} cy={node.y}
@@ -1201,7 +1198,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           {grains.map((g, gi) => (
             <g key={g.id}>
               <rect x={g.x} y={g.y} width={g.w} height={g.h}
-                fill="none" stroke={C.stroke} strokeWidth={1.5} rx={3} />
+                fill="none" stroke="none" rx={3} />
               {phase === 'idle' && lattices[gi].map((node, ni) => (
                 <circle key={ni} cx={node.x} cy={node.y}
                   r={node.type === 'Si' ? 4 : 3}
