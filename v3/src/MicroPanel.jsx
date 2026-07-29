@@ -41,7 +41,8 @@ const BOND_BREAK = {
   'ss':      0.08,
   'cs':      0.18,   // high threshold — cs bonds stretch visibly before breaking
 }
-const P2_SNAP_RAMP = 0.22  // fraction of Phase 2 each row spends sliding; rows overlap so many move at once
+const P2_SNAP_RAMP = 0.40  // fraction of Phase 2 each particle spends sliding; wide so many rows overlap
+const P2_JITTER    = 0.05  // per-particle random offset breaks row synchronisation
 const NEAR_BOND  = MATRIX_SPACING * 1.15           // ~18.4 px
 const DIAG_BOND  = MATRIX_SPACING * Math.SQRT2 * 1.1 // ~24.9 px
 const GRAIN_BOND = H_STEP + 4                      // 36 px  (max intra-grain)
@@ -50,7 +51,7 @@ const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 // Continuous strain colour: near-bg → navy → amber → red.
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
 const COLOR_STOPS = [
-  [0.00, 213, 204, 190],
+  [0.00, 172, 167, 160],
   [0.15,  40,  55, 100],
   [0.35, 255, 200,   0],
   [1.00, 255,   0,   0],
@@ -268,6 +269,13 @@ function buildIons(grains) {
   return ions
 }
 
+// Fast integer hash → [0, 1) for per-particle phase-2 jitter.
+function p2Hash(i) {
+  let x = (i * 2654435761) >>> 0
+  x = (Math.imul(x ^ (x >>> 16), 0x45d9f3b)) >>> 0
+  return (x ^ (x >>> 16)) / 0x100000000
+}
+
 // ── Phase 2 displacement precomputation ───────────────────────
 // Annotates each cement particle with:
 //   p2frac  – fraction along the total crack path when the crack reaches this atom
@@ -319,19 +327,21 @@ function buildPhase2Disps(particles, crackWaypoints) {
         if (p.y0 < yLo - 0.5 || p.y0 > yHi + 0.5) continue
         const yFrac = (p.y0 - yLo) / (yHi - yLo)
         if (p.x0 >= Math.min(s.a.x, s.b.x)) {
-          p2frac[i] = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP)
+          const base = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
+          p2frac[i] = Math.max(0, Math.min(1 - P2_SNAP_RAMP, base + (p2Hash(i) - 0.5) * P2_JITTER))
           p2disp[i] = 2 * MATRIX_SPACING
           break
         }
       } else if (s.goesRight) {
-        // Horizontal segment along grain top: atoms near the grain surface all
-        // activate at the same moment (s.f0) — the whole band slips at once.
+        // Horizontal segment along grain top — stagger atoms by x so the band
+        // ripples across rather than snapping all at once.
         const crackY = s.a.y
         const xLo = Math.min(s.a.x, s.b.x)
         const xHi = Math.max(s.a.x, s.b.x)
         if (Math.abs(p.y0 - crackY) <= THRESH &&
             p.x0 >= xLo - 0.5 && p.x0 <= xHi + 0.5) {
-          p2frac[i] = s.f0 * (1 - P2_SNAP_RAMP)
+          const base = s.f0 * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
+          p2frac[i] = Math.max(0, Math.min(1 - P2_SNAP_RAMP, base + (p2Hash(i) - 0.5) * P2_JITTER))
           p2disp[i] = 2 * MATRIX_SPACING
           break
         }
@@ -351,7 +361,7 @@ function buildPhase2Disps(particles, crackWaypoints) {
   }
   for (const g of grainGroups.values()) { g.cx /= g.indices.length; g.cy /= g.indices.length }
 
-  for (const g of grainGroups.values()) {
+  for (const [gKey, g] of grainGroups.entries()) {
     for (const s of segs) {
       const sdx = s.b.x - s.a.x
       const sdy = s.b.y - s.a.y
@@ -360,7 +370,8 @@ function buildPhase2Disps(particles, crackWaypoints) {
       if (g.cy < yLo - 0.5 || g.cy > yHi + 0.5) continue
       const yFrac = (g.cy - yLo) / (yHi - yLo)
       if (g.cx >= Math.min(s.a.x, s.b.x)) {
-        const frac = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP)
+        const base = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
+        const frac = Math.max(0, Math.min(1 - P2_SNAP_RAMP, base + (p2Hash(gKey * 997 + 1) - 0.5) * P2_JITTER))
         for (const i of g.indices) { p2frac[i] = frac; p2disp[i] = 2 * MATRIX_SPACING }
         break
       }
@@ -568,7 +579,7 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
   const vy = p => p.y0 + (p.y - p.y0) * visualScale
 
   // ── Bonds: continuous per-bond colour interpolated from strain ──
-  ctx.globalAlpha = 0.65
+  ctx.globalAlpha = 0.50
   for (let b = 0; b < bonds.length; b++) {
     const bond = bonds[b]
     if (bond.broken) continue
@@ -673,7 +684,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag) {
   ctx.fillRect(0, 0, VW, VH)
 
   // Seismic shake — strongest at crack initiation, done by p2Progress = 0.5
-  const shakeAmp = Math.max(0, 1 - p2Progress * 2) * 0.6
+  const shakeAmp = Math.max(0, 1 - p2Progress * 2) * 0.69
   ctx.translate(
     shakeAmp * (Math.sin(ts * 0.053 + 1.7) * 0.65 + Math.sin(ts * 0.089 + 0.4) * 0.35),
     shakeAmp * 0.45 * Math.sin(ts * 0.047 + 2.3),
@@ -708,7 +719,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag) {
   }
 
   // ── Bonds ── (skip bonds that span the crack — one end shifted, other not)
-  ctx.globalAlpha = 0.65
+  ctx.globalAlpha = 0.50
   for (let b = 0; b < bonds.length; b++) {
     const bond = bonds[b]
     if (!showDiag && bond.diagonal) continue
@@ -845,17 +856,16 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
 
     if (phase === 'idle') {
-      // Reset physics to rest positions and clear canvas
       physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints)
       stableRef.current = 0
       dispForceRef.current = 0
       crackFractionRef.current = 0
-      const canvas = canvasRef.current
-      if (canvas) {
-        const ctx = canvas.getContext('2d')
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
+      function idleLoop(ts) {
+        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0)
+        rafRef.current = requestAnimationFrame(idleLoop)
       }
-      return
+      rafRef.current = requestAnimationFrame(idleLoop)
+      return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
     }
 
     if (phase === 'settled' || phase === 'failed') {
@@ -1074,9 +1084,12 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       p2StartTimeRef.current = null
       p2ProgressRef.current  = 0
       b2phaseRef.current = 'phase1'
-      const c = canvasRef.current
-      if (c) { const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height) }
-      return
+      function idleLoop(ts) {
+        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0)
+        rafRef.current = requestAnimationFrame(idleLoop)
+      }
+      rafRef.current = requestAnimationFrame(idleLoop)
+      return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
     }
 
     if (phase === 'settled' || phase === 'failed') {

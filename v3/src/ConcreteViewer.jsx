@@ -109,30 +109,35 @@ export default function ConcreteViewer() {
       </header>
 
       <main className="micro-section">
-        <span className="panel-title">{view === 'A' ? 'View A' : 'View B'}</span>
-        {view === 'A' ? (
-          <MicroPanel
-            sandPct={sandPct}
-            phase={phase}
-            layoutSeed={layoutSeed}
-            force={force}
-            speed={speed}
-            crackWaypoints={crackWaypoints}
-            onSettled={handleSettled}
-            onFailed={handleFailed}
-          />
-        ) : (
-          <MicroPanelB
-            sandPct={sandPct}
-            phase={phase}
-            layoutSeed={layoutSeed}
-            force={force}
-            speed={speed}
-            crackWaypoints={crackWaypoints}
-            onSettled={handleSettled}
-            onFailed={handleFailed}
-          />
-        )}
+        <div className="force-viz-space">
+          <span className="panel-title">Forces</span>
+        </div>
+        <div className="micro-square">
+          <span className="panel-title">{view === 'A' ? 'View A' : 'View B'}</span>
+          {view === 'A' ? (
+            <MicroPanel
+              sandPct={sandPct}
+              phase={phase}
+              layoutSeed={layoutSeed}
+              force={force}
+              speed={speed}
+              crackWaypoints={crackWaypoints}
+              onSettled={handleSettled}
+              onFailed={handleFailed}
+            />
+          ) : (
+            <MicroPanelB
+              sandPct={sandPct}
+              phase={phase}
+              layoutSeed={layoutSeed}
+              force={force}
+              speed={speed}
+              crackWaypoints={crackWaypoints}
+              onSettled={handleSettled}
+              onFailed={handleFailed}
+            />
+          )}
+        </div>
       </main>
     </div>
   )
