@@ -52,11 +52,10 @@ const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
 const COLOR_STOPS = [
   [0.00, 172, 167, 160],  // warm grey  — zero strain
-  [0.08,  20,  40, 120],  // deep navy  — onset
-  [0.25,   0, 155, 255],  // electric blue
-  [0.55, 160,   0, 255],  // violet
-  [0.80, 255,  40, 180],  // hot pink
-  [1.00, 255, 180, 230],  // light pink — max strain
+  [0.12, 255, 180, 230],  // light pink
+  [0.28, 255,  40, 180],  // hot pink — early onset, wide zone
+  [0.80, 160,   0, 255],  // violet/purple
+  [1.00,   0, 200, 255],  // neon blue  — max strain
 ]
 
 function strainColor(strain, breakStrain) {
@@ -426,7 +425,7 @@ function buildPhysics(ions, grains, lattices, crackWaypoints) {
         if (d <= NEAR_BOND) bondType = 'cc-near'
         else if (d <= DIAG_BOND) bondType = 'cc-diag'
       } else if (pi.isGrain && pj.isGrain && pi.grainIdx === pj.grainIdx) {
-        if (d <= GRAIN_BOND && !(pi.type === 'O' && pj.type === 'O')) bondType = 'ss'
+        if (d <= GRAIN_BOND && (pi.type === 'Si') !== (pj.type === 'Si')) bondType = 'ss'
       } else if (pi.isGrain !== pj.isGrain) {
         // Cement-sand interface bonds. Grains are clamped deep enough that these
         // form laterally (grain sides ↔ adjacent matrix), not vertically above the
@@ -547,6 +546,7 @@ function canvasJitter(idx, t) {
 // at both ends regardless of bondRound, so it never looks like a circle.
 function fillLens(ctx, ax, ay, bx, by, bondRound) {
   const len = Math.hypot(bx - ax, by - ay)
+  ctx.beginPath()   // always reset path so caller's fill/stroke is a no-op on degenerate bonds
   if (len < 0.5) return
   const ux = (bx - ax) / len, uy = (by - ay) / len  // along bond
   const px = -uy, py = ux                             // perpendicular
@@ -617,26 +617,19 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
     ctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
     fillLens(ctx, ax, ay, bx, by, bondRound)
     ctx.fill()
+    ctx.strokeStyle = bond.type === 'cs' ? '#ffffff' : '#000000'
+    ctx.lineWidth = bond.type === 'cs' ? 1.2 : 0.8
+    ctx.stroke()
   }
   ctx.globalAlpha = 1
 
-  // ── Matrix atoms at amplified physics positions + thermal jitter ──
-  for (let i = 0; i < matrixCount; i++) {
+  // ── All atoms at amplified physics positions + thermal jitter ──
+  for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
     const { jx, jy } = canvasJitter(i, t)
     ctx.beginPath()
     ctx.arc(vx(p) + jx, vy(p) + jy, p.r, 0, Math.PI * 2)
-    ctx.fillStyle = p.type === 'Ca' ? C.Ca : C.O
-    ctx.fill()
-  }
-
-  // ── Grain atoms at physics positions + thermal jitter ──
-  for (let i = matrixCount; i < particles.length; i++) {
-    const p = particles[i]
-    const { jx, jy } = canvasJitter(i, t)
-    ctx.beginPath()
-    ctx.arc(vx(p) + jx, vy(p) + jy, p.r, 0, Math.PI * 2)
-    ctx.fillStyle = p.type === 'Si' ? C.Si : C.O
+    ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
     ctx.fill()
   }
 
@@ -703,7 +696,6 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
   ctx.rect(0, 0, VW, VH)
   ctx.clip()
 
-  // Fill viewbox background to cover the SVG grain rects drawn below the canvas
   ctx.fillStyle = C.bg
   ctx.fillRect(0, 0, VW, VH)
 
@@ -733,12 +725,10 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     const g = grains[gi]
     const rep = grainParticles[gi]?.[0]
     const grainDx = rep !== undefined ? xs[rep] - particles[rep].x0 : 0
-    ctx.fillStyle = C.grain
     ctx.strokeStyle = C.stroke
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.roundRect(g.x + grainDx, g.y, g.w, g.h, 3)
-    ctx.fill()
     ctx.stroke()
   }
 
@@ -755,26 +745,19 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     ctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
     fillLens(ctx, ax, ay, bx, by, bondRound)
     ctx.fill()
+    ctx.strokeStyle = bond.type === 'cs' ? '#ffffff' : '#000000'
+    ctx.lineWidth = bond.type === 'cs' ? 1.2 : 0.8
+    ctx.stroke()
   }
   ctx.globalAlpha = 1
 
-  // ── Matrix atoms ──
-  for (let i = 0; i < matrixCount; i++) {
+  // ── All atoms displaced + thermal jitter ──
+  for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
     const { jx, jy } = canvasJitter(i, t)
     ctx.beginPath()
     ctx.arc(xs[i] + jx, p.y0 + jy, p.r, 0, Math.PI * 2)
-    ctx.fillStyle = p.type === 'Ca' ? C.Ca : C.O
-    ctx.fill()
-  }
-
-  // ── Grain atoms displaced with their grain + thermal jitter ──
-  for (let i = matrixCount; i < particles.length; i++) {
-    const p = particles[i]
-    const { jx, jy } = canvasJitter(i, t)
-    ctx.beginPath()
-    ctx.arc(xs[i] + jx, p.y0 + jy, p.r, 0, Math.PI * 2)
-    ctx.fillStyle = p.type === 'Si' ? C.Si : C.O
+    ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
     ctx.fill()
   }
 
@@ -803,7 +786,7 @@ function jitterStyle(idx) {
 }
 
 const C = {
-  Si: '#d4a020', O: '#cc3a3a', Ca: '#1f7a32',
+  Si: '#d4a020', O: '#cc3a3a', Ca: '#706a6a',
   bg: '#ede8df', grain: '#d8cb98', stroke: '#a09050',
 }
 
@@ -990,7 +973,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
           {grains.map((g, gi) => (
             <g key={g.id}>
               <rect x={g.x} y={g.y} width={g.w} height={g.h}
-                fill={C.grain} stroke={C.stroke} strokeWidth={1.5} rx={3} />
+                fill="none" stroke={C.stroke} strokeWidth={1.5} rx={3} />
               {phase === 'idle' && lattices[gi].map((node, ni) => (
                 <circle key={ni}
                   cx={node.x} cy={node.y}
@@ -1050,11 +1033,10 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
         <defs>
           <linearGradient id="field-grad" x1="0" x2="1" y1="0" y2="0">
             <stop offset="0%"   stopColor="rgb(172,167,160)" />
-            <stop offset="8%"   stopColor="rgb(20,40,120)" />
-            <stop offset="25%"  stopColor="rgb(0,155,255)" />
-            <stop offset="55%"  stopColor="rgb(160,0,255)" />
-            <stop offset="80%"  stopColor="rgb(255,40,180)" />
-            <stop offset="100%" stopColor="rgb(255,180,230)" />
+            <stop offset="12%"  stopColor="rgb(255,180,230)" />
+            <stop offset="28%"  stopColor="rgb(255,40,180)" />
+            <stop offset="80%"  stopColor="rgb(160,0,255)" />
+            <stop offset="100%" stopColor="rgb(0,200,255)" />
           </linearGradient>
         </defs>
         <g transform={`translate(${VW - 178}, ${VH - 20})`}>
@@ -1219,7 +1201,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           {grains.map((g, gi) => (
             <g key={g.id}>
               <rect x={g.x} y={g.y} width={g.w} height={g.h}
-                fill={C.grain} stroke={C.stroke} strokeWidth={1.5} rx={3} />
+                fill="none" stroke={C.stroke} strokeWidth={1.5} rx={3} />
               {phase === 'idle' && lattices[gi].map((node, ni) => (
                 <circle key={ni} cx={node.x} cy={node.y}
                   r={node.type === 'Si' ? 4 : 3}
@@ -1238,11 +1220,10 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         <defs>
           <linearGradient id="field-grad-b" x1="0" x2="1" y1="0" y2="0">
             <stop offset="0%"   stopColor="rgb(172,167,160)" />
-            <stop offset="8%"   stopColor="rgb(20,40,120)" />
-            <stop offset="25%"  stopColor="rgb(0,155,255)" />
-            <stop offset="55%"  stopColor="rgb(160,0,255)" />
-            <stop offset="80%"  stopColor="rgb(255,40,180)" />
-            <stop offset="100%" stopColor="rgb(255,180,230)" />
+            <stop offset="12%"  stopColor="rgb(255,180,230)" />
+            <stop offset="28%"  stopColor="rgb(255,40,180)" />
+            <stop offset="80%"  stopColor="rgb(160,0,255)" />
+            <stop offset="100%" stopColor="rgb(0,200,255)" />
           </linearGradient>
         </defs>
         <rect x={3} y={3} width={VW - 6} height={VH - 6} fill="none" stroke="#cc2222" strokeWidth={6} />
