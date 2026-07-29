@@ -104,7 +104,7 @@ export default function ConcreteViewer() {
           />
         </div>
         <div className="beam-photo">
-          <img src={import.meta.env.BASE_URL + 'BeamTest.png'} alt="Beam test apparatus" />
+          <img src="/concrete/BeamTest.png" alt="Beam test apparatus" />
         </div>
       </header>
 
