@@ -51,10 +51,12 @@ const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 // Continuous strain colour: near-bg → navy → amber → red.
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
 const COLOR_STOPS = [
-  [0.00, 172, 167, 160],
-  [0.15,  40,  55, 100],
-  [0.35, 255, 200,   0],
-  [1.00, 255,   0,   0],
+  [0.00, 172, 167, 160],  // warm grey  — zero strain
+  [0.08,  20,  40, 120],  // deep navy  — onset
+  [0.25,   0, 155, 255],  // electric blue
+  [0.55, 160,   0, 255],  // violet
+  [0.80, 255,  40, 180],  // hot pink
+  [1.00, 255, 180, 230],  // light pink — max strain
 ]
 
 function strainColor(strain, breakStrain) {
@@ -541,8 +543,34 @@ function canvasJitter(idx, t) {
   return { jx, jy }
 }
 
+// Draws a lens/spindle bond shape in world coordinates — always tapers to points
+// at both ends regardless of bondRound, so it never looks like a circle.
+function fillLens(ctx, ax, ay, bx, by, bondRound) {
+  const len = Math.hypot(bx - ax, by - ay)
+  if (len < 0.5) return
+  const ux = (bx - ax) / len, uy = (by - ay) / len  // along bond
+  const px = -uy, py = ux                             // perpendicular
+  const mx = (ax + bx) / 2, my = (ay + by) / 2
+  const halfL = Math.min(len * 0.40, 7)
+  const r  = Math.min(bondRound, halfL * 0.65)  // cap prevents circular look
+  const cp = halfL * 0.45                        // control-point offset — governs tip sharpness
+  ctx.beginPath()
+  ctx.moveTo(mx - halfL * ux, my - halfL * uy)
+  ctx.bezierCurveTo(
+    mx - cp * ux + r * px, my - cp * uy + r * py,
+    mx + cp * ux + r * px, my + cp * uy + r * py,
+    mx + halfL * ux, my + halfL * uy,
+  )
+  ctx.bezierCurveTo(
+    mx + cp * ux - r * px, my + cp * uy - r * py,
+    mx - cp * ux - r * px, my - cp * uy - r * py,
+    mx - halfL * ux, my - halfL * uy,
+  )
+  ctx.closePath()
+}
+
 // ── Canvas scene rendering (atoms + bonds at physics positions) ──
-function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag = false, visualScale = VISUAL_SCALE) {
+function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag = false, visualScale = VISUAL_SCALE, bondRound = 1.6) {
   if (!canvas) return
   const dpr = window.devicePixelRatio || 1
   const W   = canvas.clientWidth
@@ -586,12 +614,8 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
     if (!showDiag && bond.diagonal) continue
     const pi = particles[bond.i], pj = particles[bond.j]
     const ax = vx(pi), ay = vy(pi), bx = vx(pj), by = vy(pj)
-    const mx = (ax + bx) / 2, my = (ay + by) / 2
-    const len = Math.hypot(bx - ax, by - ay)
-    const angle = Math.atan2(by - ay, bx - ax)
     ctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
-    ctx.beginPath()
-    ctx.ellipse(mx, my, Math.min(len * 0.40, 7), 1.6, angle, 0, Math.PI * 2)
+    fillLens(ctx, ax, ay, bx, by, bondRound)
     ctx.fill()
   }
   ctx.globalAlpha = 1
@@ -655,7 +679,7 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
 // ── Phase 2 scene: row-by-row crack-opening displacement ──────
 // Atoms adjacent to the crack path are displaced rightward as p2Progress
 // sweeps from 0→1 top-to-bottom. p2Progress is driven by crackFraction.
-function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag) {
+function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6) {
   if (!canvas || !phys) return
   const dpr = window.devicePixelRatio || 1
   const W = canvas.clientWidth
@@ -728,12 +752,8 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag) {
     if (iShifted !== jShifted) continue   // spans the crack — broken
     const ax = xs[bond.i], ay = particles[bond.i].y0
     const bx = xs[bond.j], by = particles[bond.j].y0
-    const mx = (ax + bx) / 2, my = (ay + by) / 2
-    const len = Math.hypot(bx - ax, by - ay)
-    const angle = Math.atan2(by - ay, bx - ax)
     ctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
-    ctx.beginPath()
-    ctx.ellipse(mx, my, Math.min(len * 0.40, 7), 1.6, angle, 0, Math.PI * 2)
+    fillLens(ctx, ax, ay, bx, by, bondRound)
     ctx.fill()
   }
   ctx.globalAlpha = 1
@@ -783,7 +803,7 @@ function jitterStyle(idx) {
 }
 
 const C = {
-  Si: '#d4a020', O: '#cc3a3a', Ca: '#4a96be',
+  Si: '#d4a020', O: '#cc3a3a', Ca: '#1f7a32',
   bg: '#ede8df', grain: '#d8cb98', stroke: '#a09050',
 }
 
@@ -822,7 +842,7 @@ function hasBreakthroughPath(bonds, particles) {
 }
 
 // ── MicroPanel component ───────────────────────────────────────
-export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
+export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
   const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
   const ions               = useMemo(() => buildIons(grains), [grains])
   const lattices           = useMemo(() => grains.map(buildLattice), [grains])
@@ -837,6 +857,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
   const forceRef     = useRef(force)
   const speedRef     = useRef(speed)
   const showDiagRef  = useRef(showDiag)
+  const bondRoundRef = useRef(bondRound)
   const dispForceRef    = useRef(0)   // animated ramp: 0 → forceRef.current
   const stableRef       = useRef(0)   // consecutive stable frames
   const crackFractionRef = useRef(0)  // last computed crack fraction, read by draw-only loop
@@ -845,6 +866,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
   useEffect(() => { forceRef.current = force }, [force])
   useEffect(() => { speedRef.current = speed }, [speed])
   useEffect(() => { showDiagRef.current = showDiag }, [showDiag])
+  useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
 
   // Rebuild physics whenever layout changes
   useEffect(() => {
@@ -861,7 +883,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       dispForceRef.current = 0
       crackFractionRef.current = 0
       function idleLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0)
+        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0, bondRoundRef.current)
         rafRef.current = requestAnimationFrame(idleLoop)
       }
       rafRef.current = requestAnimationFrame(idleLoop)
@@ -871,7 +893,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
     if (phase === 'settled' || phase === 'failed') {
       // Physics is frozen — keep redrawing so thermal jitter stays alive
       function drawLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, crackFractionRef.current, crackWaypoints, ts, showDiagRef.current)
+        drawScene(canvasRef.current, physRef.current, crackFractionRef.current, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
         rafRef.current = requestAnimationFrame(drawLoop)
       }
       rafRef.current = requestAnimationFrame(drawLoop)
@@ -901,7 +923,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       const crackFraction = faultBonds.length > 0 ? faultBroken / faultBonds.length : 0
       crackFractionRef.current = crackFraction
 
-      drawScene(canvasRef.current, phys, crackFraction, crackWaypoints, ts, showDiagRef.current)
+      drawScene(canvasRef.current, phys, crackFraction, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
       frameCount++
 
       const brokenNow = phys.bonds.filter(b => b.broken).length
@@ -1027,10 +1049,12 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
         {/* Electric field color key */}
         <defs>
           <linearGradient id="field-grad" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%"   stopColor="rgb(213,204,190)" />
-            <stop offset="15%"  stopColor="rgb(40,55,100)" />
-            <stop offset="35%"  stopColor="rgb(255,200,0)" />
-            <stop offset="100%" stopColor="rgb(255,0,0)" />
+            <stop offset="0%"   stopColor="rgb(172,167,160)" />
+            <stop offset="8%"   stopColor="rgb(20,40,120)" />
+            <stop offset="25%"  stopColor="rgb(0,155,255)" />
+            <stop offset="55%"  stopColor="rgb(160,0,255)" />
+            <stop offset="80%"  stopColor="rgb(255,40,180)" />
+            <stop offset="100%" stopColor="rgb(255,180,230)" />
           </linearGradient>
         </defs>
         <g transform={`translate(${VW - 178}, ${VH - 20})`}>
@@ -1046,7 +1070,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 }
 
 // ── View B: Phase 1 (bonds stress, atoms at rest) → Phase 2 (bonds break, atoms displace) ──
-export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
+export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
   const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
   const ions               = useMemo(() => buildIons(grains), [grains])
   const lattices           = useMemo(() => grains.map(buildLattice), [grains])
@@ -1060,6 +1084,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   const forceRef         = useRef(force)
   const speedRef         = useRef(speed)
   const showDiagRef      = useRef(showDiag)
+  const bondRoundRef     = useRef(bondRound)
   const dispForceRef     = useRef(0)
   const stableRef        = useRef(0)
   const p2StartTimeRef   = useRef(null)
@@ -1069,6 +1094,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   useEffect(() => { forceRef.current = force }, [force])
   useEffect(() => { speedRef.current = speed }, [speed])
   useEffect(() => { showDiagRef.current = showDiag }, [showDiag])
+  useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
 
   useEffect(() => {
     physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints)
@@ -1085,7 +1111,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       p2ProgressRef.current  = 0
       b2phaseRef.current = 'phase1'
       function idleLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0)
+        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0, bondRoundRef.current)
         rafRef.current = requestAnimationFrame(idleLoop)
       }
       rafRef.current = requestAnimationFrame(idleLoop)
@@ -1101,9 +1127,9 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
             ? Math.min(1, (ts - p2StartTimeRef.current) * speedRef.current / P2_DURATION)
             : p2ProgressRef.current
           p2ProgressRef.current = p2Progress
-          drawPhase2Scene(canvasRef.current, physRef.current, p2Progress, ts, showDiagRef.current)
+          drawPhase2Scene(canvasRef.current, physRef.current, p2Progress, ts, showDiagRef.current, bondRoundRef.current)
         } else {
-          drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0)
+          drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
         }
         rafRef.current = requestAnimationFrame(drawLoop)
       }
@@ -1144,9 +1170,9 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         const P2_DURATION = 833   // ms at speed=1
         const p2Progress = Math.min(1, (ts - p2StartTimeRef.current) * speedRef.current / P2_DURATION)
         p2ProgressRef.current = p2Progress
-        drawPhase2Scene(canvasRef.current, phys, p2Progress, ts, showDiagRef.current)
+        drawPhase2Scene(canvasRef.current, phys, p2Progress, ts, showDiagRef.current, bondRoundRef.current)
       } else {
-        drawScene(canvasRef.current, phys, 0, crackWaypoints, ts, showDiagRef.current, 0)
+        drawScene(canvasRef.current, phys, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
       }
       frameCount++
 
@@ -1211,10 +1237,12 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
         <defs>
           <linearGradient id="field-grad-b" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%"   stopColor="rgb(213,204,190)" />
-            <stop offset="15%"  stopColor="rgb(40,55,100)" />
-            <stop offset="35%"  stopColor="rgb(255,200,0)" />
-            <stop offset="100%" stopColor="rgb(255,0,0)" />
+            <stop offset="0%"   stopColor="rgb(172,167,160)" />
+            <stop offset="8%"   stopColor="rgb(20,40,120)" />
+            <stop offset="25%"  stopColor="rgb(0,155,255)" />
+            <stop offset="55%"  stopColor="rgb(160,0,255)" />
+            <stop offset="80%"  stopColor="rgb(255,40,180)" />
+            <stop offset="100%" stopColor="rgb(255,180,230)" />
           </linearGradient>
         </defs>
         <rect x={3} y={3} width={VW - 6} height={VH - 6} fill="none" stroke="#cc2222" strokeWidth={6} />

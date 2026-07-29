@@ -14,6 +14,7 @@ export default function ConcreteViewer() {
   const [speedIdx, setSpeedIdx]     = useState(2)  // index into SPEEDS; default 1.0×
 
   const [view, setView]             = useState('B')
+  const [bondRound, setBondRound]   = useState(3)
 
   const replayRef = useRef(false)
 
@@ -91,6 +92,11 @@ export default function ConcreteViewer() {
           <div className="toolbar-divider" />
           <button className={`preset-btn ${view === 'A' ? 'active' : ''}`} onClick={() => setView('A')}>View A</button>
           <button className={`preset-btn ${view === 'B' ? 'active' : ''}`} onClick={() => setView('B')}>View B</button>
+          <div className="toolbar-divider" />
+          <span className="toolbar-label dev-label">round</span>
+          <input type="range" className="speed-slider" min={1} max={8} step={0.5}
+            value={bondRound} onChange={e => setBondRound(Number(e.target.value))} />
+          <span className="toolbar-label dev-label">{bondRound.toFixed(1)}</span>
         </div>
         <div className="macro-thumb">
           <span className="panel-title">Macro</span>
@@ -121,6 +127,7 @@ export default function ConcreteViewer() {
               layoutSeed={layoutSeed}
               force={force}
               speed={speed}
+              bondRound={bondRound}
               crackWaypoints={crackWaypoints}
               onSettled={handleSettled}
               onFailed={handleFailed}
@@ -132,6 +139,7 @@ export default function ConcreteViewer() {
               layoutSeed={layoutSeed}
               force={force}
               speed={speed}
+              bondRound={bondRound}
               crackWaypoints={crackWaypoints}
               onSettled={handleSettled}
               onFailed={handleFailed}
