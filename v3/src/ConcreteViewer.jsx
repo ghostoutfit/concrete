@@ -1,13 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import MacroPanel from './MacroPanel'
-import MicroPanel, { buildGrains, buildCrackWaypoints, VW, VH } from './MicroPanel'
+import MicroPanel, { MicroPanelB, buildGrains, buildCrackWaypoints, VW, VH } from './MicroPanel'
 import './ConcreteViewer.css'
 
 const SAND_PRESETS = [0, 20, 40, 60, 80]
-const SCOPE_OPTIONS = [
-  { value: 'everything',  label: 'Everything' },
-  { value: 'crack-zone',  label: 'Near crack only' },
-]
 const SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 
 export default function ConcreteViewer() {
@@ -15,8 +11,9 @@ export default function ConcreteViewer() {
   const [phase, setPhase]     = useState('idle')  // 'idle'|'testing'|'settled'|'failed'
   const [force, setForce]     = useState(1000 / 1500)
   const [layoutSeed, setLayoutSeed] = useState(0)
-  const [calcScope, setCalcScope]   = useState('everything')
   const [speedIdx, setSpeedIdx]     = useState(2)  // index into SPEEDS; default 1.0×
+
+  const [view, setView]             = useState('B')
 
   const replayRef = useRef(false)
 
@@ -34,7 +31,7 @@ export default function ConcreteViewer() {
     () => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42),
     [sandPct, layoutSeed]
   )
-  const crackWaypoints = useMemo(() => buildCrackWaypoints(grains), [grains])
+  const crackWaypoints = useMemo(() => buildCrackWaypoints(grains, sandPct), [grains, sandPct])
 
   // Normalised 0–1 waypoints for the macro block (scale to block coords in MacroPanel)
   const crackPts = useMemo(
@@ -92,13 +89,8 @@ export default function ConcreteViewer() {
           />
           <span className="toolbar-label speed-icon">🐇</span>
           <div className="toolbar-divider" />
-          <span className="toolbar-label">Scope</span>
-          <select className="scope-select" value={calcScope}
-            onChange={e => setCalcScope(e.target.value)}>
-            {SCOPE_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          <button className={`preset-btn ${view === 'A' ? 'active' : ''}`} onClick={() => setView('A')}>View A</button>
+          <button className={`preset-btn ${view === 'B' ? 'active' : ''}`} onClick={() => setView('B')}>View B</button>
         </div>
         <div className="macro-thumb">
           <span className="panel-title">Macro</span>
@@ -108,23 +100,39 @@ export default function ConcreteViewer() {
             onForceChange={setForce}
             sandPct={sandPct}
             crackPts={crackPts}
+            layoutSeed={layoutSeed}
           />
+        </div>
+        <div className="beam-photo">
+          <img src={import.meta.env.BASE_URL + 'BeamTest.png'} alt="Beam test apparatus" />
         </div>
       </header>
 
       <main className="micro-section">
-        <span className="panel-title">Micro</span>
-        <MicroPanel
-          sandPct={sandPct}
-          phase={phase}
-          layoutSeed={layoutSeed}
-          force={force}
-          speed={speed}
-          calcScope={calcScope}
-          crackWaypoints={crackWaypoints}
-          onSettled={handleSettled}
-          onFailed={handleFailed}
-        />
+        <span className="panel-title">{view === 'A' ? 'View A' : 'View B'}</span>
+        {view === 'A' ? (
+          <MicroPanel
+            sandPct={sandPct}
+            phase={phase}
+            layoutSeed={layoutSeed}
+            force={force}
+            speed={speed}
+            crackWaypoints={crackWaypoints}
+            onSettled={handleSettled}
+            onFailed={handleFailed}
+          />
+        ) : (
+          <MicroPanelB
+            sandPct={sandPct}
+            phase={phase}
+            layoutSeed={layoutSeed}
+            force={force}
+            speed={speed}
+            crackWaypoints={crackWaypoints}
+            onSettled={handleSettled}
+            onFailed={handleFailed}
+          />
+        )}
       </main>
     </div>
   )

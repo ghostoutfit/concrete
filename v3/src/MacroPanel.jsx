@@ -1,6 +1,35 @@
+import { useMemo, useState, useEffect, useRef } from 'react'
+
 const DEFORM = { 0: 0.30, 20: 0.55, 40: 0.80, 60: 0.65, 80: 1.10 }
 
-export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, crackPts = [] }) {
+const CRACK_CFG = {
+   0: { nSegs:  1, dev: 0.00 },
+  20: { nSegs:  3, dev: 0.06 },
+  40: { nSegs:  7, dev: 0.13 },
+  60: { nSegs: 11, dev: 0.20 },
+  80: { nSegs: 17, dev: 0.28 },
+}
+
+function makeRand(seed) {
+  let s = (seed * 1664525 + 1013904223) >>> 0
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 0x100000000 }
+}
+
+function generateCrack(sandPct, seed) {
+  const { nSegs, dev } = CRACK_CFG[sandPct] ?? CRACK_CFG[0]
+  if (nSegs <= 1 || dev === 0) return [[0.5, 0], [0.5, 1]]
+  const rand = makeRand(seed)
+  const pts = [[0.5, 0]]
+  let x = 0.5
+  for (let i = 1; i <= nSegs; i++) {
+    x += (rand() - 0.5) * dev * 2
+    x = Math.max(0.06, Math.min(0.94, x))
+    pts.push([x, i / nSegs])
+  }
+  return pts
+}
+
+export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, crackPts = [], layoutSeed = 0 }) {
   const beamL  = 160
   const beamH  = 38
   const wallW  = 18
@@ -10,10 +39,37 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
   const beamY  = 72
   const beamBotY = beamY + beamH
 
-  // Bending: tipDrop is the vertical deflection at the right end (only during/after test)
+  // Bending: tipDrop is the vertical deflection at the right end
   const deformFactor = DEFORM[sandPct] ?? 0.80
   const maxTipDrop   = 14
-  const tipDrop      = phase === 'idle' ? 0 : force * maxTipDrop * deformFactor
+  const fullDrop     = force * maxTipDrop * deformFactor
+  // Target: almost nothing before crack, full deflection after
+  const targetDrop   = phase === 'idle' ? 0
+    : (phase === 'testing') ? fullDrop * 0.06
+    : fullDrop
+
+  const [tipDrop, setTipDrop] = useState(0)
+  const animRef = useRef({ val: 0, rafId: null })
+
+  useEffect(() => {
+    cancelAnimationFrame(animRef.current.rafId)
+    // Snap for idle/testing (tiny values — lag is invisible)
+    if (phase === 'idle' || phase === 'testing') {
+      animRef.current.val = targetDrop
+      setTipDrop(targetDrop)
+      return
+    }
+    // Smooth lerp when crack hits (failed/settled)
+    function tick() {
+      const delta = targetDrop - animRef.current.val
+      if (Math.abs(delta) < 0.02) { setTipDrop(targetDrop); return }
+      animRef.current.val += delta * 0.12
+      setTipDrop(animRef.current.val)
+      animRef.current.rafId = requestAnimationFrame(tick)
+    }
+    animRef.current.rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(animRef.current.rafId)
+  }, [targetDrop, phase])
 
   // Cubic bezier control points — near-zero deflection at wall, full at tip
   const cpX1  = beamX + beamL * 0.33
@@ -47,15 +103,22 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
   const dotX = beamX + beamL * dotFrac
   const dotY = beamY  // near-zero deflection at this position
 
+  const jaggedPts = useMemo(
+    () => generateCrack(sandPct, layoutSeed * 7919 + sandPct * 137),
+    [sandPct, layoutSeed]
+  )
+  const macroCrackD = jaggedPts.map(([xn, yn], i) => {
+    const x = (dotX + (xn - 0.5) * beamH * 0.50).toFixed(1)
+    const y = (beamY + yn * beamH * 0.70).toFixed(1)
+    return `${i === 0 ? 'M' : 'L'}${x},${y}`
+  }).join(' ')
+
   // ViewBox
   const vbL = 0
   const vbR = tipX + 20
   const vbT = beamY - maxArrowLen - arrowHeadH - 10
   const vbB = beamBotY + maxTipDrop + 10
   const viewBox = `${vbL} ${vbT} ${vbR - vbL} ${vbB - vbT}`
-
-  // Macro crack: independent of micro coordinates — just a vertical line at the red dot
-  const macroCrackD = `M ${dotX.toFixed(1)},${beamY} L ${dotX.toFixed(1)},${(beamY + beamH * 0.70).toFixed(1)}`
 
   const forceKN   = Math.round(force * 1500)
   const sliderVal = Math.round(force * 100)

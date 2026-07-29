@@ -34,15 +34,15 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 20px;
+  gap: 4px;
+  padding: 0 12px;
   flex: 1;
 }
 
 .toolbar-label {
-  font-size: 13px;
+  font-size: 12px;
   color: #999;
-  margin-right: 4px;
+  margin-right: 2px;
 }
 
 .toolbar-divider {
@@ -55,12 +55,12 @@ body {
 
 /* ── sand preset buttons ── */
 .preset-btn {
-  padding: 4px 14px;
+  padding: 3px 8px;
   border: 1px solid #444;
   border-radius: 4px;
   background: #2e2e2e;
   color: #ccc;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -78,9 +78,9 @@ body {
 
 /* ── test / reset buttons ── */
 .action-btn {
-  padding: 5px 16px;
+  padding: 3px 10px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   border: none;
@@ -145,6 +145,24 @@ body {
   width: 280px;
   flex-shrink: 0;
   overflow: hidden;
+}
+
+.beam-photo {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid #333;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f0e8;
+}
+
+.beam-photo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .macro-thumb .macro-panel-inner {
@@ -287,6 +305,38 @@ body {
   font-size: 11px;
   fill: #888;
   font-family: system-ui, sans-serif;
+}
+
+/* ── dev label ── */
+.dev-label {
+  color: #7a5a20 !important;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── grain mode toggle (dev tool) ── */
+.grain-mode-btn {
+  padding: 3px 10px;
+  border: 1px solid #5a4010;
+  border-radius: 3px;
+  background: #2a2010;
+  color: #8a7040;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.grain-mode-btn:hover {
+  background: #3a2e14;
+  color: #c0a050;
+}
+
+.grain-mode-btn.active {
+  background: #5a3a08;
+  border-color: #c08020;
+  color: #f0c060;
 }
 
 /* ── crack animations ── */
