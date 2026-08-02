@@ -24,8 +24,8 @@ body {
 .top-bar {
   display: flex;
   align-items: stretch;
-  height: 15vh;
-  min-height: 80px;
+  height: 22vh;
+  min-height: 130px;
   background: #242424;
   border-bottom: 1px solid #333;
   flex-shrink: 0;
@@ -257,6 +257,7 @@ body {
   align-items: stretch;
   overflow: hidden;
   background: #1e1e1e;
+  position: relative;   /* photo-stage positions against this */
 }
 
 .force-viz-space {
@@ -283,7 +284,25 @@ body {
   position: absolute;
   top: 8px;
   left: 12px;
-  z-index: 2;
+  z-index: 4;
+}
+
+/* ── time scrub bar ── */
+.scrub-bar {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  background: #1a1a1a;
+  border-bottom: 1px solid #2a2a2a;
+  z-index: 3;
+}
+
+.scrub-bar input[type=range] {
+  width: 100%;
+  accent-color: #a08060;
+  cursor: pointer;
 }
 
 /* ── shared ── */
@@ -360,6 +379,84 @@ body {
   border-color: #c08020;
   color: #f0c060;
 }
+
+/* ── zoom scrub slider ── */
+.scrub-slider {
+  width: 120px;
+  cursor: pointer;
+  accent-color: #c08040;
+}
+
+/* ── bridge offset sliders ── */
+.offset-slider {
+  width: 80px;
+  cursor: pointer;
+  accent-color: #a060c0;
+}
+
+/* ── phase step counters ── */
+.phase-counter {
+  font-size: 11px;
+  color: #777;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: 2px;
+}
+
+/* ── photo button ── */
+.photo-btn {
+  background: #2e2e2e;
+  color: #a0b8d0;
+  border: 1px solid #3a5a78;
+}
+
+.photo-btn:hover {
+  background: #2a4a64;
+  color: #c8dff0;
+}
+
+/* ── photo stage (absolute overlay, covers sim during photo view) ── */
+.photo-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #f5f0e8;
+}
+
+.photo-zoom-layer {
+  position: relative;
+  aspect-ratio: 3000 / 1687;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.photo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+}
+
+/* Red clickable box — position driven by JS; contains live sim thumbnail */
+.photo-box {
+  position: absolute;
+  border: 2.5px solid #cc2222;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 0 8px rgba(200,30,30,0.5);
+  cursor: pointer;
+  overflow: hidden;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.photo-box:hover {
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.6), 0 0 16px rgba(200,30,30,0.9);
+  border-color: #ff4444;
+}
+
 
 /* ── crack animations ── */
 @keyframes draw-crack {

@@ -542,6 +542,23 @@ function canvasJitter(idx, t) {
   return { jx, jy }
 }
 
+// ── Scrub recording helpers ────────────────────────────────────
+function snapshotP1(phys, crackFraction, ts) {
+  const { particles, bonds } = phys
+  const n = particles.length, m = bonds.length
+  const px = new Float32Array(n), py = new Float32Array(n)
+  const bs = new Float32Array(m), bb = new Uint8Array(m)
+  for (let i = 0; i < n; i++) { px[i] = particles[i].x; py[i] = particles[i].y }
+  for (let j = 0; j < m; j++) { bs[j] = bonds[j].strain; bb[j] = bonds[j].broken ? 1 : 0 }
+  return { type: 'p1', px, py, bs, bb, cf: crackFraction, ts }
+}
+
+function applyP1Snapshot(phys, snap) {
+  const { particles, bonds } = phys
+  for (let i = 0; i < particles.length; i++) { particles[i].x = snap.px[i]; particles[i].y = snap.py[i] }
+  for (let j = 0; j < bonds.length; j++) { bonds[j].strain = snap.bs[j]; bonds[j].broken = snap.bb[j] === 1 }
+}
+
 // Draws a lens/spindle bond shape in world coordinates — always tapers to points
 // at both ends regardless of bondRound, so it never looks like a circle.
 function fillLens(ctx, ax, ay, bx, by, bondRound) {
@@ -822,7 +839,7 @@ function hasBreakthroughPath(bonds, particles) {
 }
 
 // ── MicroPanel component ───────────────────────────────────────
-export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
+export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed, scrubT = null, onRecordingReady }) {
   const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
   const ions               = useMemo(() => buildIons(grains), [grains])
   const lattices           = useMemo(() => grains.map(buildLattice), [grains])
@@ -841,12 +858,16 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
   const dispForceRef    = useRef(0)   // animated ramp: 0 → forceRef.current
   const stableRef       = useRef(0)   // consecutive stable frames
   const crackFractionRef = useRef(0)  // last computed crack fraction, read by draw-only loop
+  const recordingRef    = useRef([])
+  const finalSnapRef    = useRef(null)
+  const scrubTRef       = useRef(scrubT)
 
   // Keep refs in sync with props (picked up inside RAF without restart)
   useEffect(() => { forceRef.current = force }, [force])
   useEffect(() => { speedRef.current = speed }, [speed])
   useEffect(() => { showDiagRef.current = showDiag }, [showDiag])
   useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
+  useEffect(() => { scrubTRef.current = scrubT }, [scrubT])
 
   // Rebuild physics whenever layout changes
   useEffect(() => {
@@ -862,6 +883,8 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       stableRef.current = 0
       dispForceRef.current = 0
       crackFractionRef.current = 0
+      recordingRef.current = []
+      finalSnapRef.current = null
       function idleLoop(ts) {
         drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0, bondRoundRef.current)
         rafRef.current = requestAnimationFrame(idleLoop)
@@ -871,9 +894,22 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
     }
 
     if (phase === 'settled' || phase === 'failed') {
-      // Physics is frozen — keep redrawing so thermal jitter stays alive
+      let prevSt = scrubTRef.current
       function drawLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, crackFractionRef.current, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
+        const st = scrubTRef.current
+        const rec = recordingRef.current
+        // Restore final state when user releases scrub handle
+        if (st === null && prevSt !== null && finalSnapRef.current) {
+          applyP1Snapshot(physRef.current, finalSnapRef.current)
+        }
+        prevSt = st
+        if (st !== null && rec.length > 0) {
+          const snap = rec[Math.round(st * (rec.length - 1))]
+          applyP1Snapshot(physRef.current, snap)
+          drawScene(canvasRef.current, physRef.current, snap.cf, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
+        } else {
+          drawScene(canvasRef.current, physRef.current, crackFractionRef.current, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
+        }
         rafRef.current = requestAnimationFrame(drawLoop)
       }
       rafRef.current = requestAnimationFrame(drawLoop)
@@ -882,6 +918,8 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 
     if (phase !== 'testing') return
 
+    recordingRef.current = []
+    finalSnapRef.current = null
     stableRef.current = 0
     dispForceRef.current = 0   // always ramp from zero so crack forms as animation
     let frameCount = 0
@@ -906,11 +944,18 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       drawScene(canvasRef.current, phys, crackFraction, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
       frameCount++
 
+      // Record every other frame
+      if (frameCount % 2 === 0) recordingRef.current.push(snapshotP1(phys, crackFraction, ts))
+
       const brokenNow = phys.bonds.filter(b => b.broken).length
       const newBreaks  = brokenNow > prevBroken
 
       // Trigger failure (and sync macro crack) as soon as the first fault bond breaks
       if (canBreak && crackFraction > 0 && newBreaks) {
+        const snap = snapshotP1(phys, crackFraction, ts)
+        recordingRef.current.push(snap)
+        finalSnapRef.current = snap
+        onRecordingReady?.()
         onFailed?.()
         return
       }
@@ -926,6 +971,10 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       const forceFullyRamped = dispForceRef.current >= forceRef.current - 0.001
       const atTarget = Math.abs(phys.currentDisp - dispForceRef.current * MAX_PUNCH_DISP) < 0.05
       if (frameCount > 30 && stableRef.current >= SETTLE_FRAMES && phys.currentDisp > 0.1 && atTarget && forceFullyRamped) {
+        const snap = snapshotP1(phys, crackFraction, ts)
+        recordingRef.current.push(snap)
+        finalSnapRef.current = snap
+        onRecordingReady?.()
         onSettled?.()
         return
       }
@@ -1037,7 +1086,15 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
           </linearGradient>
         </defs>
         <g transform={`translate(${VW - 178}, ${VH - 20})`}>
-          <rect x={-4} y={-11} width={174} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+          <rect x={-4} y={-27} width={174} height={40} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+          {/* Bond type row */}
+          <rect x={0} y={-25} width={32} height={16} fill={C.bg} rx={2} />
+          <ellipse cx={11} cy={-17} rx={12} ry={4} fill="rgb(172,167,160)" stroke="white" strokeWidth={1.8} />
+          <text x={27} y={-13} className="micro-legend">IMF</text>
+          <rect x={62} y={-25} width={40} height={16} fill={C.bg} rx={2} />
+          <ellipse cx={73} cy={-17} rx={12} ry={4} fill="rgb(172,167,160)" stroke="#111" strokeWidth={1.0} />
+          <text x={89} y={-13} className="micro-legend">Bond</text>
+          {/* Electric field row */}
           <text x={0} y={1} className="micro-legend">Electric field:</text>
           <rect x={78} y={-9} width={84} height={12} fill="url(#field-grad)" />
           <text x={78} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>low</text>
@@ -1049,7 +1106,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 }
 
 // ── View B: Phase 1 (bonds stress, atoms at rest) → Phase 2 (bonds break, atoms displace) ──
-export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed }) {
+export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed, scrubT = null, onRecordingReady }) {
   const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
   const ions               = useMemo(() => buildIons(grains), [grains])
   const lattices           = useMemo(() => grains.map(buildLattice), [grains])
@@ -1069,11 +1126,16 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   const p2StartTimeRef   = useRef(null)
   const p2ProgressRef    = useRef(0)
   const b2phaseRef       = useRef('phase1')  // transitions to 'phase2' on first bond break
+  const recordingRef     = useRef([])
+  const finalSnapRef     = useRef(null)
+  const lastP1SnapRef    = useRef(null)
+  const scrubTRef        = useRef(scrubT)
 
   useEffect(() => { forceRef.current = force }, [force])
   useEffect(() => { speedRef.current = speed }, [speed])
   useEffect(() => { showDiagRef.current = showDiag }, [showDiag])
   useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
+  useEffect(() => { scrubTRef.current = scrubT }, [scrubT])
 
   useEffect(() => {
     physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints)
@@ -1089,6 +1151,9 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       p2StartTimeRef.current = null
       p2ProgressRef.current  = 0
       b2phaseRef.current = 'phase1'
+      recordingRef.current = []
+      finalSnapRef.current = null
+      lastP1SnapRef.current = null
       function idleLoop(ts) {
         drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0, bondRoundRef.current)
         rafRef.current = requestAnimationFrame(idleLoop)
@@ -1098,10 +1163,27 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
     }
 
     if (phase === 'settled' || phase === 'failed') {
+      let prevSt = scrubTRef.current
       function drawLoop(ts) {
+        const st = scrubTRef.current
+        const rec = recordingRef.current
         const isP2 = b2phaseRef.current === 'phase2'
-        if (isP2) {
-          const P2_DURATION = 833   // ms at speed=1
+        // Restore break-point strains when user releases scrub handle during Phase 2
+        if (st === null && prevSt !== null && isP2 && lastP1SnapRef.current) {
+          applyP1Snapshot(physRef.current, lastP1SnapRef.current)
+        }
+        prevSt = st
+        if (st !== null && rec.length > 0) {
+          const snap = rec[Math.round(st * (rec.length - 1))]
+          if (snap.type === 'p2') {
+            if (lastP1SnapRef.current) applyP1Snapshot(physRef.current, lastP1SnapRef.current)
+            drawPhase2Scene(canvasRef.current, physRef.current, snap.p2Progress, ts, showDiagRef.current, bondRoundRef.current)
+          } else {
+            applyP1Snapshot(physRef.current, snap)
+            drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
+          }
+        } else if (isP2) {
+          const P2_DURATION = 833
           const p2Progress = p2StartTimeRef.current !== null
             ? Math.min(1, (ts - p2StartTimeRef.current) * speedRef.current / P2_DURATION)
             : p2ProgressRef.current
@@ -1118,6 +1200,9 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
 
     if (phase !== 'testing') return
 
+    recordingRef.current = []
+    finalSnapRef.current = null
+    lastP1SnapRef.current = null
     stableRef.current = 0
     dispForceRef.current = 0
     p2StartTimeRef.current = null
@@ -1136,27 +1221,28 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
 
       const brokenNow = phys.bonds.filter(b => b.broken).length
 
-      // First break → snap into Phase 2 and simultaneously trigger macro crack
+      // First break → snap into Phase 2, pre-fill p2 frames, trigger macro crack
       if (canBreak && b2phaseRef.current === 'phase1' && brokenNow > 0) {
         b2phaseRef.current = 'phase2'
         p2StartTimeRef.current = ts
+        const snap = snapshotP1(phys, 0, ts)
+        recordingRef.current.push(snap)
+        lastP1SnapRef.current = snap
+        finalSnapRef.current = snap
+        // Pre-fill 60 Phase 2 frames (p2Progress 0→1)
+        for (let k = 0; k <= 60; k++) recordingRef.current.push({ type: 'p2', p2Progress: k / 60 })
+        onRecordingReady?.()
         onFailed?.()
         return
       }
 
-      const isP2 = b2phaseRef.current === 'phase2'
-      if (isP2) {
-        const P2_DURATION = 833   // ms at speed=1
-        const p2Progress = Math.min(1, (ts - p2StartTimeRef.current) * speedRef.current / P2_DURATION)
-        p2ProgressRef.current = p2Progress
-        drawPhase2Scene(canvasRef.current, phys, p2Progress, ts, showDiagRef.current, bondRoundRef.current)
-      } else {
-        drawScene(canvasRef.current, phys, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
-      }
+      drawScene(canvasRef.current, phys, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
       frameCount++
 
-      const newBreaks = brokenNow > prevBroken
+      // Record every other Phase 1 frame
+      if (frameCount % 2 === 0) recordingRef.current.push(snapshotP1(phys, 0, ts))
 
+      const newBreaks = brokenNow > prevBroken
       if (newBreaks) stableRef.current = 0
       else stableRef.current++
       prevBroken = brokenNow
@@ -1164,6 +1250,10 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       const forceFullyRamped = dispForceRef.current >= forceRef.current - 0.001
       const atTarget = Math.abs(phys.currentDisp - dispForceRef.current * MAX_PUNCH_DISP) < 0.05
       if (frameCount > 30 && stableRef.current >= SETTLE_FRAMES && phys.currentDisp > 0.1 && atTarget && forceFullyRamped) {
+        const snap = snapshotP1(phys, 0, ts)
+        recordingRef.current.push(snap)
+        finalSnapRef.current = snap
+        onRecordingReady?.()
         onSettled?.()
         return
       }
@@ -1232,7 +1322,15 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="O²⁻" />
         </g>
         <g transform={`translate(${VW - 178}, ${VH - 20})`}>
-          <rect x={-4} y={-11} width={174} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+          <rect x={-4} y={-27} width={174} height={40} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+          {/* Bond type row */}
+          <rect x={0} y={-25} width={32} height={16} fill={C.bg} rx={2} />
+          <ellipse cx={11} cy={-17} rx={12} ry={4} fill="rgb(172,167,160)" stroke="white" strokeWidth={1.8} />
+          <text x={27} y={-13} className="micro-legend">IMF</text>
+          <rect x={62} y={-25} width={40} height={16} fill={C.bg} rx={2} />
+          <ellipse cx={73} cy={-17} rx={12} ry={4} fill="rgb(172,167,160)" stroke="#111" strokeWidth={1.0} />
+          <text x={89} y={-13} className="micro-legend">Bond</text>
+          {/* Electric field row */}
           <text x={0} y={1} className="micro-legend">Electric field:</text>
           <rect x={78} y={-9} width={84} height={12} fill="url(#field-grad-b)" />
           <text x={78} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>low</text>

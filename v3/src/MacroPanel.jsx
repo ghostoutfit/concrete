@@ -15,7 +15,7 @@ function makeRand(seed) {
   return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 0x100000000 }
 }
 
-function generateCrack(sandPct, seed) {
+export function generateCrack(sandPct, seed) {
   const { nSegs, dev } = CRACK_CFG[sandPct] ?? CRACK_CFG[0]
   if (nSegs <= 1 || dev === 0) return [[0.5, 0], [0.5, 1]]
   const rand = makeRand(seed)
@@ -29,7 +29,7 @@ function generateCrack(sandPct, seed) {
   return pts
 }
 
-export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, crackPts = [], layoutSeed = 0 }) {
+export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, sandPct = 40, crackPts = [], layoutSeed = 0, arrowScale = 2 }) {
   const beamL  = 160
   const beamH  = 38
   const wallW  = 18
@@ -90,10 +90,10 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
     'Z',
   ].join(' ')
 
-  // Force arrow — at right end, pointing down from above
-  const maxArrowLen = 36
-  const arrowHeadH  = 10
-  const arrowHeadW  = 12
+  // Force arrow — scaled independently so it stays legible at any force level
+  const maxArrowLen = 36 * arrowScale
+  const arrowHeadH  = 10 * arrowScale
+  const arrowHeadW  = 12 * arrowScale
   const arrowLen    = force * maxArrowLen
   const arrowTip    = topR
   const arrowBase   = arrowTip - arrowLen - arrowHeadH
@@ -167,7 +167,7 @@ export default function MacroPanel({ phase = 'idle', force = 0, onForceChange, s
               <line
                 x1={tipX} y1={arrowBase}
                 x2={tipX} y2={arrowTip - arrowHeadH + 1}
-                stroke="#d4813a" strokeWidth={4} strokeLinecap="round"
+                stroke="#d4813a" strokeWidth={4 * Math.min(arrowScale, 2)} strokeLinecap="round"
               />
             )}
             <polygon
