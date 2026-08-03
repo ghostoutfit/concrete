@@ -297,6 +297,19 @@ export default function ConcreteViewer() {
   const boxW = 8 * photoBoxSize
   const boxH = boxW * (VH / VW) * pzlAspect
 
+  const crackOriginY = photoBoxY - 1.2   // aligns with red box top (matches calc(photoBoxY% - 8px))
+
+  let blueBoxPos = null
+  if (bestBranch) {
+    const [xnE, ynE] = bestBranch.pts[bestBranch.pts.length - 1]
+    blueBoxPos = {
+      x: photoBoxX + (xnE - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE,
+      y: crackOriginY + ynE * CRACK_Y_FAC * boxH * CRACK_SCALE,
+    }
+  }
+  const zoomOriginX = activeBox === 'blue' && blueBoxPos ? blueBoxPos.x : photoBoxX
+  const zoomOriginY = activeBox === 'blue' && blueBoxPos ? blueBoxPos.y : photoBoxY + boxH / 2
+
   const inPhase2     = phase2Active
   const needsP2Xfrm  = inPhase2
   const showPhoto    = photoView !== 'off'
@@ -378,20 +391,6 @@ export default function ConcreteViewer() {
   const tPusher      = Math.max(0, Math.min(1, (pusherX - barX) / Math.max(barSize, 0.1)))
   const pusherDropPct = force * 0.04 * effectiveBendAnim * tPusher * tPusher
                         * barSize * BAR_IMG_AR * pzlAspect
-
-  // Maps a crack strand's normalised pts to photo-layer % coords
-  const crackOriginY = photoBoxY - 1.2   // aligns with red box top (matches calc(photoBoxY% - 8px))
-
-  let blueBoxPos = null
-  if (bestBranch) {
-    const [xnE, ynE] = bestBranch.pts[bestBranch.pts.length - 1]
-    blueBoxPos = {
-      x: photoBoxX + (xnE - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE,
-      y: crackOriginY + ynE * CRACK_Y_FAC * boxH * CRACK_SCALE,
-    }
-  }
-  const zoomOriginX = activeBox === 'blue' && blueBoxPos ? blueBoxPos.x : photoBoxX
-  const zoomOriginY = activeBox === 'blue' && blueBoxPos ? blueBoxPos.y : photoBoxY + boxH / 2
 
   function strandToPhotoCapD(strand) {
     const [xn0] = strand.pts[0]
@@ -685,8 +684,12 @@ export default function ConcreteViewer() {
               className="photo-zoom-layer"
               style={{
                 aspectRatio: `3000 / ${PZL_IMG_H * (1 - cropFrac)}`,
-                transformOrigin: `${zoomOriginX}% ${zoomOriginY}%`,
-                transform: `scale(${photoScale})`,
+                transformOrigin: `50% 50%`,
+                // translate keeps zoom target at viewport centre: as scale grows, the offset
+                // from photo-centre to zoom-target is amplified, so we counter it exactly.
+                transform: photoScale === 1
+                  ? 'none'
+                  : `translate(${-photoScale * (zoomOriginX - 50)}%, ${-photoScale * (zoomOriginY - 50)}%) scale(${photoScale})`,
                 imageRendering: photoScale > 5 ? 'pixelated' : 'auto',
               }}
             >
