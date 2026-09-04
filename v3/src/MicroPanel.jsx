@@ -52,10 +52,10 @@ const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
 const COLOR_STOPS = [
   [0.00, 172, 167, 160],  // warm grey  — zero strain
-  [0.12, 255, 180, 230],  // light pink
-  [0.28, 255,  40, 180],  // hot pink — early onset, wide zone
-  [0.80, 160,   0, 255],  // violet/purple
-  [1.00,   0, 200, 255],  // neon blue  — max strain
+  [0.25, 255, 180, 230],  // light pink
+  [0.50, 255,  40, 180],  // hot pink
+  [0.75, 160,   0, 255],  // violet/purple
+  [1.00,   0, 200, 255],  // neon blue  — at break
 ]
 
 function strainColor(strain, breakStrain) {
@@ -146,6 +146,7 @@ export function buildCrackWaypoints(grains, sandPct = 0) {
 
   // Sand-proportional jitter: subdivide vertical segments with a correlated
   // random walk so more sand = more jagged crack.
+
   const maxDev = sandPct * 0.25   // 0 → 20 SVG units across the sand range
   if (maxDev < 1) return waypoints
 
@@ -167,6 +168,33 @@ export function buildCrackWaypoints(grains, sandPct = 0) {
   }
   out.push(waypoints[waypoints.length - 1])
   return out
+}
+
+// ── Blue view grain + crack (big grain stops crack) ───────────
+const BIG_GRAIN_COLS = 7
+const BIG_GRAIN_ROWS = 5
+
+export function buildBlueGrains(sandPct, seed) {
+  const { w: bw, h: bh } = grainDims(BIG_GRAIN_COLS, BIG_GRAIN_ROWS)
+  const bx0 = Math.round((VW / 2 - bw / 2) / MATRIX_SPACING) * MATRIX_SPACING
+  const by0 = Math.round((VH / 2 - bh / 2) / MATRIX_SPACING) * MATRIX_SPACING
+  const bx = ((bx0 / MATRIX_SPACING + by0 / MATRIX_SPACING) % 2 === 0) ? bx0 : bx0 + MATRIX_SPACING
+  const bigGrain = { x: bx, y: by0, w: bw, h: bh, id: 999, siCols: BIG_GRAIN_COLS, siRows: BIG_GRAIN_ROWS, isBig: true }
+
+  const regular = buildGrains(sandPct, seed)
+  const pad = 20
+  const filtered = regular.filter(g =>
+    g.x + g.w + pad < bigGrain.x || g.x > bigGrain.x + bigGrain.w + pad ||
+    g.y + g.h + pad < bigGrain.y || g.y > bigGrain.y + bigGrain.h + pad
+  )
+  return [...filtered, bigGrain]
+}
+
+export function buildBlueCrackWaypoints(blueGrains) {
+  const bigGrain = blueGrains.find(g => g.isBig)
+  if (!bigGrain) return [{ x: VW / 2, y: 0 }, { x: VW / 2, y: VH }]
+  const targetX = bigGrain.x + bigGrain.w / 2
+  return [{ x: VW / 2, y: 0 }, { x: targetX, y: bigGrain.y }]
 }
 
 // ── Seeded PRNG ────────────────────────────────────────────────
@@ -689,7 +717,9 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
 // ── Phase 2 scene: row-by-row crack-opening displacement ──────
 // Atoms adjacent to the crack path are displaced rightward as p2Progress
 // sweeps from 0→1 top-to-bottom. p2Progress is driven by crackFraction.
-function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6) {
+const HANG_MS = 260
+
+function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6, hangStart = null) {
   if (!canvas || !phys) return
   const dpr = window.devicePixelRatio || 1
   const W = canvas.clientWidth
@@ -737,14 +767,6 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     xs[i] = particles[i].x0 + p2disp[i] * eased
   }
 
-  // ── Grain rects at displaced positions ──
-  for (let gi = 0; gi < grains.length; gi++) {
-    const g = grains[gi]
-    const rep = grainParticles[gi]?.[0]
-    const grainDx = rep !== undefined ? xs[rep] - particles[rep].x0 : 0
-    ctx.beginPath()
-    ctx.roundRect(g.x + grainDx, g.y, g.w, g.h, 3)
-  }
 
   // ── Bonds ── (skip bonds that span the crack — one end shifted, other not)
   ctx.globalAlpha = 0.50
@@ -764,6 +786,26 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     ctx.stroke()
   }
   ctx.globalAlpha = 1
+
+  // ── Bright-blue hang: flash broken bonds at peak colour before they vanish ──
+  if (hangStart !== null) {
+    const age = ts - hangStart
+    if (age < HANG_MS) {
+      const alpha = Math.max(0, 1 - age / HANG_MS) * 0.88
+      ctx.globalAlpha = alpha
+      for (let b = 0; b < bonds.length; b++) {
+        const bond = bonds[b]
+        if (!bond.broken) continue
+        if (!showDiag && bond.diagonal) continue
+        const ax = xs[bond.i], ay = particles[bond.i].y0
+        const bx = xs[bond.j], by = particles[bond.j].y0
+        ctx.fillStyle = 'rgb(0, 200, 255)'
+        fillLens(ctx, ax, ay, bx, by, bondRound)
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+    }
+  }
 
   // ── All atoms displaced + thermal jitter ──
   for (let i = 0; i < particles.length; i++) {
@@ -956,7 +998,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
         recordingRef.current.push(snap)
         finalSnapRef.current = snap
         onRecordingReady?.()
-        onFailed?.()
+        onFailed?.(Math.round(dispForceRef.current * 2500))
         return
       }
 
@@ -1106,8 +1148,11 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 }
 
 // ── View B: Phase 1 (bonds stress, atoms at rest) → Phase 2 (bonds break, atoms displace) ──
-export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed, scrubT = null, onRecordingReady }) {
-  const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
+export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, scrubT = null, onRecordingReady }) {
+  const grains             = useMemo(
+    () => grainOverride ?? buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42),
+    [sandPct, layoutSeed, grainOverride]
+  )
   const ions               = useMemo(() => buildIons(grains), [grains])
   const lattices           = useMemo(() => grains.map(buildLattice), [grains])
   const crackWaypointsSelf = useMemo(() => buildCrackWaypoints(grains, sandPct), [grains, sandPct])
@@ -1177,7 +1222,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           const snap = rec[Math.round(st * (rec.length - 1))]
           if (snap.type === 'p2') {
             if (lastP1SnapRef.current) applyP1Snapshot(physRef.current, lastP1SnapRef.current)
-            drawPhase2Scene(canvasRef.current, physRef.current, snap.p2Progress, ts, showDiagRef.current, bondRoundRef.current)
+            drawPhase2Scene(canvasRef.current, physRef.current, snap.p2Progress, ts, showDiagRef.current, bondRoundRef.current, null)
           } else {
             applyP1Snapshot(physRef.current, snap)
             drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
@@ -1188,7 +1233,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
             ? Math.min(1, (ts - p2StartTimeRef.current) * speedRef.current / P2_DURATION)
             : p2ProgressRef.current
           p2ProgressRef.current = p2Progress
-          drawPhase2Scene(canvasRef.current, physRef.current, p2Progress, ts, showDiagRef.current, bondRoundRef.current)
+          drawPhase2Scene(canvasRef.current, physRef.current, p2Progress, ts, showDiagRef.current, bondRoundRef.current, p2StartTimeRef.current)
         } else {
           drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current)
         }
@@ -1287,8 +1332,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           ))}
           {grains.map((g, gi) => (
             <g key={g.id}>
-              <rect x={g.x} y={g.y} width={g.w} height={g.h}
-                fill="none" stroke="none" rx={3} />
+              <rect x={g.x} y={g.y} width={g.w} height={g.h} fill="none" stroke="none" rx={3} />
               {phase === 'idle' && lattices[gi].map((node, ni) => (
                 <circle key={ni} cx={node.x} cy={node.y}
                   r={node.type === 'Si' ? 4 : 3}
@@ -1313,7 +1357,14 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
             <stop offset="100%" stopColor="rgb(0,200,255)" />
           </linearGradient>
         </defs>
-        <rect x={3} y={3} width={VW - 6} height={VH - 6} fill="none" stroke="#cc2222" strokeWidth={6} />
+        <rect x={3} y={3} width={VW - 6} height={VH - 6} fill="none" stroke={accentColor} strokeWidth={6} />
+        {label && (
+          <text x={12} y={18}
+            style={{ fontSize: '10px', fontFamily: 'system-ui,sans-serif', fontWeight: 700, letterSpacing: '0.12em' }}
+            fill={accentColor} opacity={0.85}>
+            {label.toUpperCase()}
+          </text>
+        )}
         <g transform={`translate(10, ${VH - 20})`}>
           <rect x={-4} y={-11} width={200} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
           <LegendDot cx={6}   cy={0} r={4} fill={C.Si} label="Si" />
