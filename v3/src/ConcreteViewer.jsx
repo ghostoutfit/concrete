@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
-import MacroPanel, { generateCrack } from './MacroPanel'
+import { generateCrack } from './MacroPanel'
 import { MicroPanelB, buildGrains, buildCrackWaypoints, buildBlueGrains, buildBlueCrackWaypoints, VW, VH } from './MicroPanel'
 import './ConcreteViewer.css'
 
@@ -21,22 +21,40 @@ const lerp = (a, b, t) => a + (b - a) * t
 
 const BAR_IMG_AR = 372 / 1278   // BarAlone2.png naturalHeight/naturalWidth
 
-const CRACK_SCALE   = 7    // magnification relative to red box size
+const CRACK_SCALE      = 7    // magnification relative to red box size
+const THUMB_CRACK_SCALE = 3   // smaller crack spread for mini thumbnail
 const CRACK_Y_FAC  = 0.70  // macro renders crack at 70% of beam height
 const CRACK_X_FAC  = 0.50  // macro horizontal spread factor
 
-// Renders BarAlone.png with a quadratic downward bend.
+const BAR_SRCS = {
+  0:  ['/concrete/0Sandbar.png',  null],
+  20: ['/concrete/0Sandbar.png',  '/concrete/40Sandbar.png'],
+  40: ['/concrete/40Sandbar.png', null],
+  60: ['/concrete/40Sandbar.png', '/concrete/80Sandbar.png'],
+  80: ['/concrete/80Sandbar.png', null],
+}
+
+// Renders bar image with a quadratic downward bend. Optionally blends a second
+// image at 50% opacity for intermediate sand percentages.
 // bend = right-edge drop as a fraction of the image's natural height.
 // Left edge is pinned at y=0; each column x shifts down by bend*H*(x/W)^2.
-function BentBar({ src, bend = 0, style }) {
+function BentBar({ src, src2 = null, bend = 0, style }) {
   const canvasRef = useRef(null)
-  const [img, setImg] = useState(null)
+  const [img,  setImg]  = useState(null)
+  const [img2, setImg2] = useState(null)
 
   useEffect(() => {
     const el = new Image()
     el.onload = () => setImg(el)
     el.src = src
   }, [src])
+
+  useEffect(() => {
+    if (!src2) { setImg2(null); return }
+    const el = new Image()
+    el.onload = () => setImg2(el)
+    el.src = src2
+  }, [src2])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -52,7 +70,15 @@ function BentBar({ src, bend = 0, style }) {
       const t = x / Math.max(W - 1, 1)
       ctx.drawImage(img, x, 0, 1, H, x, dropPx * t * t, 1, H)
     }
-  }, [img, bend])
+    if (img2) {
+      ctx.globalAlpha = 0.5
+      for (let x = 0; x < W; x++) {
+        const t = x / Math.max(W - 1, 1)
+        ctx.drawImage(img2, x, 0, 1, H, x, dropPx * t * t, 1, H)
+      }
+      ctx.globalAlpha = 1
+    }
+  }, [img, img2, bend])
 
   return <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: 'auto', ...style }} />
 }
@@ -90,6 +116,272 @@ function SimThumb({ srcRef, opacity = 1 }) {
   )
 }
 
+const GREY_Y_EXTRA = 11  // zoom-layer % offset — grey box is this far below the red box
+
+function ZoomHint({ x, y, color, circleSize, textBelow = false, extraUp = 0 }) {
+  const fontSize = Math.max(9, circleSize * 0.52)
+  const gap = circleSize / 2 + 4
+  const textTransform = textBelow
+    ? `translate(-50%, calc(50% + ${gap}px))`
+    : `translate(-50%, calc(-50% - ${gap + extraUp}px))`
+  return (
+    <>
+      <div style={{
+        position: 'absolute',
+        left: `${x}%`,
+        top: `${y}%`,
+        width: circleSize,
+        height: circleSize,
+        borderRadius: '50%',
+        background: color,
+        opacity: 0.38,
+        transform: 'translate(-50%, -50%)',
+        pointerEvents: 'none',
+        userSelect: 'none',
+        zIndex: 25,
+      }} />
+      <div style={{
+        position: 'absolute',
+        left: `${x}%`,
+        top: `${y}%`,
+        transform: textTransform,
+        pointerEvents: 'none',
+        userSelect: 'none',
+        zIndex: 25,
+        color,
+        fontSize,
+        fontWeight: 700,
+        letterSpacing: '0.10em',
+        lineHeight: 1,
+        opacity: 0.85,
+        fontFamily: 'system-ui, sans-serif',
+        whiteSpace: 'nowrap',
+      }}>ZOOM</div>
+    </>
+  )
+}
+
+function PhotoScene({
+  cropFrac,
+  sandPct, barX, barY, barSize, bend,
+  macroCrackStrands, currentCrackParams,
+  photoBoxX, boxW, boxH,
+  crackScale,
+  scrubElapsed,
+  pusherX, pusherY,
+  pusherSize,
+  lcdX, lcdY, lcdKN, containerW,
+  showPhotoCracks, showBlueCrack, photoViewIsZooming,
+  photoBoxY, blueBoxPos, greyBoxX,
+  borderPx,
+  effectivePhotoScale,
+  photoBoxHovered = false, onPhotoBoxHover = null,
+  blueBoxHovered = false, onBlueBoxHover = null,
+  effectiveBoxBgAlpha = 0,
+  photoBoxRef = null, photoBoxContent = null,
+  onBoxClick,
+  capLength, capAngle,
+  boxCursor = 'zoom-in',
+  showZoomUI = true,
+}) {
+  const crackOriginY = photoBoxY
+  const circleSize = containerW * 2.5 * boxW / 100
+
+  function strandToCapD(strand) {
+    const [xn0] = strand.pts[0]
+    const px0 = photoBoxX + (xn0 - 0.5) * CRACK_X_FAC * boxW * crackScale
+    const py0 = crackOriginY
+    const capRad = capAngle * Math.PI / 180
+    const capScaleF = CRACK_Y_FAC * crackScale * boxH / 38
+    const pex = px0 + Math.sin(capRad) * capLength * capScaleF
+    const pey = py0 - Math.cos(capRad) * capLength * capScaleF
+    return `M${px0.toFixed(2)},${py0.toFixed(2)} L${pex.toFixed(2)},${pey.toFixed(2)}`
+  }
+
+  function strandToCapTipD(strand, wm) {
+    const [xn0] = strand.pts[0]
+    const px0 = photoBoxX + (xn0 - 0.5) * CRACK_X_FAC * boxW * crackScale
+    const py0 = crackOriginY
+    const capRad = capAngle * Math.PI / 180
+    const capScaleF = CRACK_Y_FAC * crackScale * boxH / 38
+    const pex = px0 + Math.sin(capRad) * capLength * capScaleF
+    const pey = py0 - Math.cos(capRad) * capLength * capScaleF
+    const sinC = Math.sin(capRad), cosC = Math.cos(capRad)
+    const hw = 0.125 * wm
+    const h  = wm * 1.5
+    const tw = hw * 0.18
+    const f  = n => n.toFixed(2)
+    return `M${f(pex - cosC*hw)},${f(pey - sinC*hw)} ` +
+           `L${f(pex + cosC*hw)},${f(pey + sinC*hw)} ` +
+           `L${f(pex + sinC*h + cosC*tw)},${f(pey - cosC*h + sinC*tw)} ` +
+           `L${f(pex + sinC*h - cosC*tw)},${f(pey - cosC*h - sinC*tw)} Z`
+  }
+
+  const wm = currentCrackParams.widthMul
+  const tp = currentCrackParams.taper
+
+  return (
+    <>
+      <img src="/concrete/BeamTestNoBeam.png" draggable={false} style={{
+        display: 'block', width: '100%', height: 'auto', userSelect: 'none',
+        transform: `translateY(-${cropFrac * 100}%)`,
+      }} />
+      <BentBar
+        src={BAR_SRCS[sandPct][0]} src2={BAR_SRCS[sandPct][1]}
+        bend={bend}
+        style={{ position: 'absolute', left: `${barX}%`, top: `${barY}%`, width: `${barSize}%`, pointerEvents: 'none', userSelect: 'none' }}
+      />
+      {showPhotoCracks && (
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
+        >
+          {macroCrackStrands.flatMap((strand, si) => {
+            const photoPts = strand.pts.map(([xn, yn]) => [
+              photoBoxX + (xn - 0.5) * CRACK_X_FAC * boxW * crackScale,
+              crackOriginY + yn * CRACK_Y_FAC * boxH * crackScale,
+            ])
+            const N = photoPts.length - 1
+            return [
+              ...(strand.fromTop ? [
+                <path key="cap" d={strandToCapD(strand)}
+                  fill="none" stroke="#1a1008" strokeWidth={0.3 * wm} strokeLinecap="butt" />,
+                <path key="captip" d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none" />,
+              ] : []),
+              ...photoPts.slice(0, -1).map(([px0, py0], i) => {
+                const [px1, py1] = photoPts[i + 1]
+                const t = N <= 1 ? 0 : i / (N - 1)
+                const w = 0.25 * wm * Math.max(0.03, 1 + tp * t)
+                const segDur = strand.durationMs / N
+                const segDelay = strand.delayMs + i * segDur
+                const d = `M${px0.toFixed(2)},${py0.toFixed(2)} L${px1.toFixed(2)},${py1.toFixed(2)}`
+                const pathStyle = scrubElapsed != null
+                  ? { strokeDasharray: 1, strokeDashoffset: 1 - Math.max(0, Math.min(1, (scrubElapsed - segDelay) / segDur)) }
+                  : { animation: `draw-crack ${segDur}ms ease-out ${segDelay}ms forwards` }
+                return <path key={`${si}-${i}`} d={d} pathLength="1" className="crack"
+                  fill="none" stroke="#1a1008" strokeWidth={w} strokeLinecap="round" style={pathStyle} />
+              }),
+            ]
+          })}
+        </svg>
+      )}
+      <img src="/concrete/Pusher.png" draggable={false} style={{
+        position: 'absolute',
+        left: `${pusherX}%`,
+        top: `${pusherY}%`,
+        width: `${pusherSize}%`,
+        height: 'auto',
+        transform: 'translateX(-50%)',
+        pointerEvents: 'none', userSelect: 'none',
+      }} />
+      <div style={{
+        position: 'absolute', left: `${lcdX}%`, top: `${lcdY}%`,
+        transform: 'translate(-50%, -50%) rotate(3deg)', zIndex: 20,
+        pointerEvents: 'none', userSelect: 'none',
+        fontFamily: '"DSEG7", "Courier New", monospace',
+        fontSize: containerW * 0.0202,
+        letterSpacing: '0.05em',
+        lineHeight: 1,
+        width: containerW * 0.086,
+      }}>
+        <span style={{ color: 'rgba(60,60,60,0.18)', position: 'absolute', inset: 0, textAlign: 'right', userSelect: 'none' }}>8888</span>
+        <span style={{ color: 'rgba(60,60,60,0.72)', display: 'block', textAlign: 'right' }}>{Math.round(lcdKN)}</span>
+      </div>
+      {showPhotoCracks && showZoomUI && (
+        <>
+          <div
+            ref={photoBoxRef}
+            className="photo-box"
+            style={{
+              left: `${photoBoxX - boxW / 2}%`,
+              top: `${crackOriginY}%`,
+              width: `${boxW}%`,
+              height: `${boxH}%`,
+              background: `rgba(245,240,232,${effectiveBoxBgAlpha})`,
+              borderWidth: `${borderPx}px`,
+              borderColor: photoBoxHovered ? '#ff4444' : '#cc2222',
+              boxShadow: photoBoxHovered
+                ? `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${16/effectivePhotoScale}px rgba(200,30,30,0.9)`
+                : `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${8/effectivePhotoScale}px rgba(200,30,30,0.5)`,
+              pointerEvents: photoViewIsZooming ? 'none' : 'auto',
+              cursor: boxCursor,
+            }}
+            onMouseEnter={() => onPhotoBoxHover?.(true)}
+            onMouseLeave={() => onPhotoBoxHover?.(false)}
+            onClick={e => { e.stopPropagation(); onBoxClick?.('red') }}
+          >
+            {photoBoxContent}
+          </div>
+          <ZoomHint
+            x={photoBoxX}
+            y={crackOriginY + boxH / 2}
+            color="#cc2222"
+            circleSize={circleSize}
+            extraUp={20}
+          />
+        </>
+      )}
+      {showBlueCrack && showZoomUI && (
+        <>
+          <div
+            className="photo-box"
+            style={{
+              left: `${blueBoxPos.x - boxW / 2}%`,
+              top: `${blueBoxPos.y - boxH / 2}%`,
+              width: `${boxW}%`,
+              height: `${boxH}%`,
+              background: 'none',
+              borderWidth: `${borderPx}px`,
+              borderColor: blueBoxHovered ? '#4499ff' : '#2266cc',
+              boxShadow: blueBoxHovered
+                ? `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${16/effectivePhotoScale}px rgba(30,100,220,0.9)`
+                : `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${8/effectivePhotoScale}px rgba(30,100,220,0.5)`,
+              pointerEvents: photoViewIsZooming ? 'none' : 'auto',
+              cursor: boxCursor,
+            }}
+            onMouseEnter={() => onBlueBoxHover?.(true)}
+            onMouseLeave={() => onBlueBoxHover?.(false)}
+            onClick={e => { e.stopPropagation(); onBoxClick?.('blue') }}
+          />
+          <ZoomHint
+            x={blueBoxPos.x}
+            y={blueBoxPos.y}
+            color="#2266cc"
+            circleSize={circleSize}
+            textBelow
+          />
+        </>
+      )}
+      {!photoViewIsZooming && showZoomUI && (
+        <>
+          <div
+            className="photo-box"
+            style={{
+              left: `${greyBoxX - boxW / 2}%`,
+              top: `${crackOriginY + GREY_Y_EXTRA}%`,
+              width: `${boxW}%`,
+              height: `${boxH}%`,
+              background: 'none',
+              borderWidth: `${borderPx}px`,
+              borderColor: '#111111',
+              boxShadow: `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.5), 0 0 ${6/effectivePhotoScale}px rgba(0,0,0,0.5)`,
+              pointerEvents: 'auto',
+              cursor: boxCursor,
+            }}
+            onClick={e => { e.stopPropagation(); onBoxClick?.('grey') }}
+          />
+          <ZoomHint
+            x={greyBoxX}
+            y={crackOriginY + GREY_Y_EXTRA + boxH / 2}
+            color="#111111"
+            circleSize={circleSize}
+            textBelow
+          />
+        </>
+      )}
+    </>
+  )
+}
+
 export default function ConcreteViewer() {
   const [sandPct, setSandPct] = useState(40)
   const [phase, setPhase]     = useState('idle')
@@ -98,22 +390,19 @@ export default function ConcreteViewer() {
   const [speedIdx, setSpeedIdx]     = useState(2)
 
   const [bondRound]  = useState(3)
-  const [arrowScale] = useState(2)
   const [hasRecording, setHasRecording] = useState(false)
   const [scrubT, setScrubT]             = useState(1)
 
   // Test scrub: checkbox shows/hides the replay slider
-  const [testScrubOn, setTestScrubOn] = useState(false)
-  const [zoomScrubOn, setZoomScrubOn] = useState(false)
-  const [zoomScrubT,  setZoomScrubT]  = useState(0)
   const [showDevSliders, setShowDevSliders] = useState(false)
+  const [zoomScrubT,  setZoomScrubT]  = useState(0)
   const [breakKN, setBreakKN] = useState(null)
   const [lcdKN, setLcdKN] = useState(0)
   const [lcdX, setLcdX] = useState(36.5)
   const [lcdY, setLcdY] = useState(60)
   const [capLength, setCapLength] = useState(15.2)
   const [capAngle,  setCapAngle]  = useState(33)
-
+  const [p2StartFrac, setP2StartFrac] = useState(null)
   const [crackParams, setCrackParams] = useState({
     0:  { depth: 1.24, dev: 0.00, segs: 1, branch: 0.03, widthMul: 2.23, speedMul: 1.0, taper: -0.25 },
     20: { depth: 1.21, dev: 0.140, segs: 1, branch: 0.14, widthMul: 1.8, speedMul: 2.9, taper: -0.55 },
@@ -198,8 +487,9 @@ export default function ConcreteViewer() {
   const [barSize,    setBarSize]    = useState(70.4)
 
   const [photoView, setPhotoView] = useState('full')
+  const [showZoomUI, setShowZoomUI] = useState(true)
   const [photoBoxX]    = useState(34.8)
-  const [photoBoxY]    = useState(24.1)
+  const [photoBoxY]    = useState(22.0)
   const [photoVShift, setPhotoVShift] = useState(17)
   const [photoBoxSize] = useState(0.25)
 
@@ -220,6 +510,7 @@ export default function ConcreteViewer() {
   const [bluePhase,        setBluePhase]        = useState('idle')
   const [blueLayoutSeed,   setBlueLayoutSeed]   = useState(1)
   const [blueHasRecording, setBlueHasRecording] = useState(false)
+  const [greyLayoutSeed,   setGreyLayoutSeed]   = useState(1)
   const photoStageRef  = useRef(null)
   const photoBoxRef    = useRef(null)
   const zoomLayerRef   = useRef(null)
@@ -240,8 +531,26 @@ export default function ConcreteViewer() {
     setPhase2Active(false)
   }
 
+  function zoomOut() {
+    setPhotoView('full')
+    setPhotoScale(1)
+    setPhase1Step(0)
+    setSimReady(false)
+  }
+
   useEffect(() => {
     const handler = e => { if (e.key === 'Escape') cancelZoom() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    let buf = ''
+    const handler = e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      buf = (buf + e.key.toLowerCase()).slice(-3)
+      if (buf === 'dev') { setShowDevSliders(d => !d); buf = '' }
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
@@ -266,17 +575,19 @@ export default function ConcreteViewer() {
   )
   const blueCrackWaypoints = useMemo(() => buildBlueCrackWaypoints(blueGrains), [blueGrains])
 
-  const crackPts = useMemo(
-    () => crackWaypoints.map(pt => [pt.x / VW, pt.y / VH]),
-    [crackWaypoints]
-  )
-  // Same seed as MacroPanel uses for its visible crack line
   const currentCrackParams = crackParams[sandPct]
   const macroCrackStrands = useMemo(
     () => generateCrack(sandPct, layoutSeed * 7919 + sandPct * 137, currentCrackParams),
     [sandPct, layoutSeed, currentCrackParams]
   )
   const totalCrackMs = macroCrackStrands.reduce((m, s) => Math.max(m, s.delayMs + s.durationMs), 0)
+
+  const isScrubbable = photoView === 'off' && hasRecording
+  const scrubElapsed = isScrubbable
+    ? (p2StartFrac != null
+      ? Math.max(0, Math.min(1, (scrubT - p2StartFrac) / (1 - p2StartFrac))) * totalCrackMs
+      : scrubT * totalCrackMs)
+    : null
 
   // Blue box: place at deepest fromTop strand endpoint, only when crack doesn't go all the way through
   const bestBranch = useMemo(() => {
@@ -289,15 +600,15 @@ export default function ConcreteViewer() {
   }, [macroCrackStrands, currentCrackParams.depth])
 
   function clearRecording() { setHasRecording(false); setScrubT(1) }
-  function startTest()  { breakFiredRef.current = false; breakThresholdRef.current = null; clearRecording(); setLayoutSeed(s => s + 1); setBlueLayoutSeed(s => s + 1); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false) }
-  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false) }
+  function startTest()  { breakFiredRef.current = false; breakThresholdRef.current = null; clearRecording(); setLayoutSeed(s => s + 1); setBlueLayoutSeed(s => s + 1); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null) }
+  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null) }
   function handleReplay() { clearRecording(); replayRef.current = true; setPhase('idle') }
 
   function handleSandPct(pct) {
     clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(s => s + 1); setBreakKN(null)
   }
 
-  function handleRecordingReady() { setHasRecording(true) }
+  function handleRecordingReady(p2Frac) { setHasRecording(true); if (p2Frac != null) setP2StartFrac(p2Frac) }
   function handleFailed(kn)  {
     if (breakFiredRef.current) return
     breakFiredRef.current = true
@@ -362,18 +673,22 @@ export default function ConcreteViewer() {
   const boxW = 8 * photoBoxSize
   const boxH = boxW * (VH / VW) * pzlAspect
 
-  const crackOriginY = photoBoxY - 1.2   // aligns with red box top (matches calc(photoBoxY% - 8px))
-
   let blueBoxPos = null
   if (bestBranch) {
     const [xnE, ynE] = bestBranch.pts[bestBranch.pts.length - 1]
     blueBoxPos = {
       x: photoBoxX + (xnE - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE,
-      y: crackOriginY + ynE * CRACK_Y_FAC * boxH * CRACK_SCALE,
+      y: photoBoxY + ynE * CRACK_Y_FAC * boxH * CRACK_SCALE,
     }
   }
-  const zoomOriginX = activeBox === 'blue' && blueBoxPos ? blueBoxPos.x : photoBoxX
-  const zoomOriginY = activeBox === 'blue' && blueBoxPos ? blueBoxPos.y : photoBoxY + boxH / 2
+  const greyBoxX = pusherX
+  const greyBoxY = photoBoxY + GREY_Y_EXTRA + boxH / 2
+  const zoomOriginX = activeBox === 'blue' && blueBoxPos ? blueBoxPos.x
+    : activeBox === 'grey' ? greyBoxX
+    : photoBoxX
+  const zoomOriginY = activeBox === 'blue' && blueBoxPos ? blueBoxPos.y
+    : activeBox === 'grey' ? greyBoxY
+    : photoBoxY + boxH / 2
 
   const inPhase2     = phase2Active
   const needsP2Xfrm  = inPhase2
@@ -386,30 +701,17 @@ export default function ConcreteViewer() {
     : Math.max(0, Math.min(1, (p1Frac - 0.5) * 2))
 
   const FINAL_ZOOM_SCALE = Math.pow(PHASE1_RATIO, PHASE1_STEPS)
-  const effectivePhotoScale = zoomScrubOn && showPhoto
+  const effectivePhotoScale = showDevSliders && showPhoto
     ? 1 + (FINAL_ZOOM_SCALE - 1) * zoomScrubT
     : photoScale
-  const effectiveThumbOpacity = zoomScrubOn
+  const effectiveThumbOpacity = showDevSliders
     ? Math.max(0, Math.min(1, (zoomScrubT - 0.5) * 2))
     : thumbOpacity
-  const effectiveBoxBgAlpha = zoomScrubOn
+  const effectiveBoxBgAlpha = showDevSliders
     ? Math.max(0, (zoomScrubT - 0.5) * 2)
     : (simReady ? 1 : Math.max(0, (p1Frac - 0.5) * 2))
 
   const borderPx = 2.5 / effectivePhotoScale
-  const photoBoxStyle = {
-    left:          `${photoBoxX - boxW / 2}%`,
-    top:           `calc(${photoBoxY}% - 8px)`,
-    width:         `${boxW}%`,
-    height:        `${boxH}%`,
-    background:    `rgba(245,240,232,${effectiveBoxBgAlpha})`,
-    borderWidth:   `${borderPx}px`,
-    borderColor:   boxHovered ? '#ff4444' : '#cc2222',
-    boxShadow:     boxHovered
-      ? `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${16/effectivePhotoScale}px rgba(200,30,30,0.9)`
-      : `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${8/effectivePhotoScale}px rgba(200,30,30,0.5)`,
-    pointerEvents: photoView === 'zooming' ? 'none' : 'auto',
-  }
 
   // Phase-2 transform: moves/scales sim wrapper to match red box in photo, then back to normal.
   // Uses getBoundingClientRect so photo-stage and micro-square can have independent sizes.
@@ -459,7 +761,7 @@ export default function ConcreteViewer() {
     : 'none'
 
   // Effective bend anim: scrub follows scrubT when replaying, else ramp
-  const effectiveBendAnim = testScrubOn && hasRecording ? scrubT : bendAnim
+  const effectiveBendAnim = photoView === 'off' && hasRecording ? scrubT : bendAnim
 
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
@@ -467,43 +769,13 @@ export default function ConcreteViewer() {
   const pusherDropPct = force * 0.04 * effectiveBendAnim * tPusher * tPusher
                         * barSize * BAR_IMG_AR * pzlAspect
 
-  function strandToPhotoCapD(strand) {
-    const [xn0] = strand.pts[0]
-    const px0 = photoBoxX + (xn0 - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE
-    const py0 = crackOriginY
-    const capRad = capAngle * Math.PI / 180
-    const capScale = CRACK_Y_FAC * CRACK_SCALE * boxH / 38
-    const pex = px0 + Math.sin(capRad) * capLength * capScale
-    const pey = py0 - Math.cos(capRad) * capLength * capScale
-    return `M${px0.toFixed(2)},${py0.toFixed(2)} L${pex.toFixed(2)},${pey.toFixed(2)}`
-  }
-  // White trapezoid at the tip of the cap line — base = stroke width, tapers along cap direction
-  function strandToCapTipD(strand, wm) {
-    const [xn0] = strand.pts[0]
-    const px0 = photoBoxX + (xn0 - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE
-    const py0 = crackOriginY
-    const capRad = capAngle * Math.PI / 180
-    const capScale = CRACK_Y_FAC * CRACK_SCALE * boxH / 38
-    const pex = px0 + Math.sin(capRad) * capLength * capScale
-    const pey = py0 - Math.cos(capRad) * capLength * capScale
-    const sinC = Math.sin(capRad), cosC = Math.cos(capRad)
-    const hw = 0.125 * wm        // half base width = half cap stroke width
-    const h  = wm * 1.5          // height along cap direction
-    const tw = hw * 0.18         // half top edge (tiny flat, not a sharp point)
-    const f  = n => n.toFixed(2)
-    // base: perpendicular to cap at tip; top: slightly further along cap, narrow
-    return `M${f(pex - cosC*hw)},${f(pey - sinC*hw)} ` +
-           `L${f(pex + cosC*hw)},${f(pey + sinC*hw)} ` +
-           `L${f(pex + sinC*h + cosC*tw)},${f(pey - cosC*h + sinC*tw)} ` +
-           `L${f(pex + sinC*h - cosC*tw)},${f(pey - cosC*h - sinC*tw)} Z`
-  }
   const showPhotoCracks = phase === 'failed' && macroCrackStrands.length > 0
   const showBlueCrack = showPhotoCracks && blueBoxPos !== null
 
-  const effectiveSimReady = zoomScrubOn ? zoomScrubT > 0.5 : simReady
+  const effectiveSimReady = showDevSliders ? zoomScrubT > 0.5 : simReady
   const simWrapperStyle = {
     flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
-    visibility: (!showPhoto || effectiveSimReady || needsP2Xfrm) ? 'visible' : 'hidden',
+    visibility: (!showPhoto || (activeBox !== 'grey' && (effectiveSimReady || needsP2Xfrm))) ? 'visible' : 'hidden',
     ...(needsP2Xfrm ? {
       position: 'relative',
       zIndex: 20,
@@ -511,65 +783,59 @@ export default function ConcreteViewer() {
       transformOrigin: '50% 50%',
     } : {}),
   }
+  const blueWrapperStyle = {
+    flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
+  }
 
   return (
     <div className="viewer">
       <header className="top-bar">
-        <div className="toolbar" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 0 }}>
-          {/* Row 1: controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="toolbar-label">Sand %</span>
+        <div className="toolbar" style={{ flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 0, position: 'relative' }}>
+          <div className="panel-bolt" style={{ top: 9, left: 9 }} />
+          <div className="panel-bolt" style={{ top: 9, right: 9 }} />
+          <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
+          <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
+          {/* Heading row */}
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', paddingBottom: 4 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+            <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+          </div>
+
+          {/* Row 1: sand presets + Test/ZoomOut */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             {SAND_PRESETS.map(pct => (
               <button key={pct}
                 className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
                 onClick={() => handleSandPct(pct)}
-              >{pct}%</button>
+              >
+                <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
+              </button>
             ))}
             <div className="toolbar-divider" />
-            <button className="action-btn test-btn"
-              onClick={startTest} disabled={phase === 'testing'}>Test</button>
-            <button className="action-btn reset-btn"
-              onClick={reset} disabled={phase === 'idle'}>Reset</button>
-            <button className="action-btn replay-btn"
-              onClick={handleReplay} disabled={phase === 'idle' || phase === 'testing'}>Replay</button>
-            <button className="action-btn photo-btn"
-              onClick={() => photoView === 'off'
-                ? (setPhotoView('full'), setPhotoScale(1), setPhase1Step(0), setSimReady(false))
-                : cancelZoom()
-              }>Photo</button>
-            <div className="toolbar-divider" />
-            <span className="toolbar-label speed-icon">🐢</span>
-            <input type="range" className="speed-slider" min={0} max={4} step={1}
-              value={speedIdx} onChange={e => setSpeedIdx(Number(e.target.value))} />
-            <span className="toolbar-label speed-icon">🐇</span>
-            <div className="toolbar-divider" />
-            <label className="toolbar-label" style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              <input type="checkbox" style={{ marginRight: 4 }}
-                checked={testScrubOn}
-                onChange={e => setTestScrubOn(e.target.checked)}
-              />
-              Scrub
-            </label>
-            <label className="toolbar-label" style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              <input type="checkbox" style={{ marginRight: 4 }}
-                checked={zoomScrubOn}
-                onChange={e => setZoomScrubOn(e.target.checked)}
-              />
-              Zoom
-            </label>
-            <div className="toolbar-divider" />
-            <label className="toolbar-label" style={{ cursor: 'pointer', whiteSpace: 'nowrap', color: '#666' }}>
-              <input type="checkbox" style={{ marginRight: 4 }}
-                checked={showDevSliders}
-                onChange={e => setShowDevSliders(e.target.checked)}
-              />
-              Dev
-            </label>
+            {photoView === 'off' ? (
+              <button className="action-btn replay-btn" onClick={zoomOut}>Zoom Out</button>
+            ) : (
+              <>
+                <button className="action-btn test-btn"
+                  onClick={startTest} disabled={phase === 'testing'}>Test</button>
+                <label className="zoom-checkbox-label">
+                  <input
+                    type="checkbox"
+                    className="zoom-checkbox"
+                    checked={showZoomUI}
+                    onChange={e => setShowZoomUI(e.target.checked)}
+                  />
+                  <span>Zoom</span>
+                </label>
+              </>
+            )}
           </div>
 
-          {/* Row 2: test replay slider */}
-          {testScrubOn && (
-            <div style={{ display: 'flex', alignItems: 'center', paddingTop: 3 }}>
+          {/* Row 2: Replay + scrub — micro view only */}
+          {photoView === 'off' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 4 }}>
+              <button className="action-btn replay-btn"
+                onClick={handleReplay} disabled={phase === 'idle' || phase === 'testing'}>Replay</button>
               <input
                 type="range"
                 min={0} max={1} step={0.001}
@@ -582,7 +848,7 @@ export default function ConcreteViewer() {
           )}
 
           {/* Row 3: zoom scrub slider */}
-          {zoomScrubOn && (
+          {showDevSliders && (
             <div style={{ display: 'flex', alignItems: 'center', paddingTop: 3 }}>
               <input
                 type="range"
@@ -682,88 +948,61 @@ export default function ConcreteViewer() {
           )}
         </div>
 
-        <div className="macro-thumb">
-          <span className="panel-title">Macro{breakKN != null && <span style={{marginLeft:10,fontSize:11,fontWeight:700,color:'#ff4444',letterSpacing:'0.04em'}}> broke @ {breakKN} kN</span>}</span>
-          <MacroPanel
-            phase={phase} force={force} onForceChange={setForce}
-            sandPct={sandPct} crackPts={crackPts}
-            layoutSeed={layoutSeed} arrowScale={arrowScale}
-            capLength={capLength} capAngle={capAngle}
-            crackGeom={currentCrackParams}
-          />
-        </div>
-        {/* Live mini photo preview — same overlays as the main photo view */}
+        {/* Live mini photo preview — always in sync with main photo */}
         <div className="beam-photo">
-          <div style={{
-            position: 'relative',
-            aspectRatio: `3000 / ${PZL_IMG_H * (1 - cropFrac)}`,
-            height: '100%',
-            maxWidth: '100%',
-            overflow: 'hidden',
-          }}>
-            <img src="/concrete/BeamTestNoBeam.png" draggable={false} style={{
-              display: 'block', width: '100%', height: 'auto', userSelect: 'none',
-              transform: `translateY(-${cropFrac * 100}%)`,
-            }} />
-            <BentBar src="/concrete/BarAlone2.png"
+          <div
+            style={{
+              position: 'relative',
+              width: '100%',
+              overflow: 'hidden',
+              aspectRatio: `3000 / ${PZL_IMG_H * (1 - cropFrac)}`,
+              cursor: photoView === 'off' ? 'zoom-out' : 'default',
+            }}
+            onClick={() => { if (photoView === 'off') zoomOut() }}
+          >
+            <PhotoScene
+              cropFrac={cropFrac}
+              sandPct={sandPct} barX={barX} barY={barY} barSize={barSize}
               bend={force * 0.04 * effectiveBendAnim}
-              style={{ position: 'absolute', left: `${barX}%`, top: `${barY}%`, width: `${barSize}%`, pointerEvents: 'none', userSelect: 'none' }}
+              macroCrackStrands={macroCrackStrands} currentCrackParams={currentCrackParams}
+              photoBoxX={photoBoxX}
+              boxW={boxW} boxH={boxH}
+              crackScale={THUMB_CRACK_SCALE}
+              scrubElapsed={scrubElapsed}
+              pusherX={pusherX} pusherY={pusherY + pusherDropPct}
+              pusherSize={pusherSize}
+              lcdX={lcdX} lcdY={lcdY} lcdKN={lcdKN} containerW={280}
+              showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
+              photoViewIsZooming={photoView === 'zooming'}
+              photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
+              showZoomUI={showZoomUI}
+              borderPx={2}
+              effectivePhotoScale={1}
+              effectiveBoxBgAlpha={0}
+              capLength={capLength} capAngle={capAngle}
+              onBoxClick={(box) => {
+                if (photoView === 'full') {
+                  if (box === 'grey') setGreyLayoutSeed(s => s + 1)
+                  handleBoxClick(box)
+                } else if (photoView === 'off') {
+                  zoomOut()
+                }
+              }}
+              boxCursor={photoView === 'off' ? 'zoom-out' : 'zoom-in'}
             />
-            {showPhotoCracks && (
-              <svg viewBox="0 0 100 100" preserveAspectRatio="none"
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
-              >
-                {macroCrackStrands.flatMap((strand, si) => {
-                  const wm = currentCrackParams.widthMul
-                  const tp = currentCrackParams.taper
-                  const isScrubbable = testScrubOn && hasRecording
-                  const elapsed = isScrubbable ? scrubT * totalCrackMs : null
-                  const photoPts = strand.pts.map(([xn, yn]) => [
-                    photoBoxX + (xn - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE,
-                    crackOriginY + yn * CRACK_Y_FAC * boxH * CRACK_SCALE,
-                  ])
-                  const N = photoPts.length - 1
-                  return [
-                    ...(strand.fromTop ? [
-                      <path key="cap" d={strandToPhotoCapD(strand)}
-                        fill="none" stroke="#1a1008" strokeWidth={0.25 * wm} strokeLinecap="round" />,
-                      <path key="captip" d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none" />,
-                    ] : []),
-                    ...photoPts.slice(0, -1).map(([px0, py0], i) => {
-                      const [px1, py1] = photoPts[i + 1]
-                      const t = N <= 1 ? 0 : i / (N - 1)
-                      const w = 0.25 * wm * Math.max(0.03, 1 + tp * t)
-                      const segDur = strand.durationMs / N
-                      const segDelay = strand.delayMs + i * segDur
-                      const d = `M${px0.toFixed(2)},${py0.toFixed(2)} L${px1.toFixed(2)},${py1.toFixed(2)}`
-                      const pathStyle = isScrubbable
-                        ? { strokeDasharray: 1, strokeDashoffset: 1 - Math.max(0, Math.min(1, (elapsed - segDelay) / segDur)) }
-                        : { animation: `draw-crack ${segDur}ms ease-out ${segDelay}ms forwards` }
-                      return <path key={`${si}-${i}`} d={d} pathLength="1" className="crack"
-                        fill="none" stroke="#1a1008" strokeWidth={w} strokeLinecap="round" style={pathStyle} />
-                    }),
-                  ]
-                })}
-              </svg>
-            )}
-            <img src="/concrete/Pusher.png" draggable={false} style={{
-              position: 'absolute', left: `${pusherX}%`, top: `${pusherY + pusherDropPct}%`,
-              width: `${pusherSize}%`, height: 'auto', transform: 'translateX(-50%)',
-              pointerEvents: 'none', userSelect: 'none',
-            }} />
           </div>
         </div>
       </header>
 
       <main className="micro-section">
-        {photoView === 'off' && (
+        {photoView === 'off' && activeBox !== 'grey' && (
           <div className="force-viz-space">
             <span className="panel-title">Forces</span>
           </div>
         )}
 
         {/* Red view */}
-        <div ref={microSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(255,80,80,0.5)', display: photoView === 'off' && activeBox === 'blue' ? 'none' : undefined }}>
+        <div ref={microSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(255,80,80,0.5)', display: photoView === 'off' && activeBox !== 'red' ? 'none' : undefined }}>
           <div style={simWrapperStyle}>
             <MicroPanelB
               sandPct={sandPct} phase={phase} layoutSeed={layoutSeed}
@@ -771,15 +1010,15 @@ export default function ConcreteViewer() {
               crackWaypoints={crackWaypoints}
               label="Matrix crack"
               onSettled={handleSettled} onFailed={handleFailed}
-              scrubT={testScrubOn && hasRecording ? scrubT : null}
+              scrubT={photoView === 'off' && hasRecording ? scrubT : null}
               onRecordingReady={handleRecordingReady}
             />
           </div>
         </div>
 
         {/* Blue view — big grain stops crack */}
-        <div ref={blueSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(80,140,255,0.5)', display: photoView === 'off' && activeBox === 'red' ? 'none' : undefined }}>
-          <div style={simWrapperStyle}>
+        <div ref={blueSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(80,140,255,0.5)', display: photoView === 'off' && activeBox !== 'blue' ? 'none' : undefined }}>
+          <div style={blueWrapperStyle}>
             <MicroPanelB
               sandPct={sandPct} phase={bluePhase} layoutSeed={blueLayoutSeed}
               force={force} speed={speed} bondRound={bondRound}
@@ -788,8 +1027,23 @@ export default function ConcreteViewer() {
               accentColor="#3d6fd4"
               label="Grain arrest"
               onSettled={() => setBluePhase('settled')} onFailed={() => setBluePhase('failed')}
-              scrubT={testScrubOn && blueHasRecording ? scrubT : null}
+              scrubT={photoView === 'off' && blueHasRecording ? scrubT : null}
               onRecordingReady={() => setBlueHasRecording(true)}
+            />
+          </div>
+        </div>
+
+        {/* Grey view — static cross-section under pusher, always idle, never breaks */}
+        <div className="micro-square" style={{ borderTop: '2px solid rgba(10,10,10,0.9)', display: photoView === 'off' && activeBox === 'grey' ? undefined : 'none' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <MicroPanelB
+              sandPct={sandPct} phase="idle" layoutSeed={greyLayoutSeed}
+              force={0} speed={1} bondRound={bondRound}
+              accentColor="#111111"
+              label="Cross-section"
+              onSettled={() => {}} onFailed={() => {}}
+              scrubT={null}
+              onRecordingReady={() => {}}
             />
           </div>
         </div>
@@ -810,135 +1064,35 @@ export default function ConcreteViewer() {
                 imageRendering: effectivePhotoScale > 5 ? 'pixelated' : 'auto',
               }}
             >
-              <img
-                src="/concrete/BeamTestNoBeam.png"
-                className="photo-img"
-                draggable={false}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  height: 'auto',
-                  transform: `translateY(-${cropFrac * 100}%)`,
-                }}
-              />
-              {/* Bar overlay — bends down quadratically with force */}
-              <BentBar
-                src="/concrete/BarAlone2.png"
+              <PhotoScene
+                cropFrac={cropFrac}
+                sandPct={sandPct} barX={barX} barY={barY} barSize={barSize}
                 bend={force * 0.04 * effectiveBendAnim}
-                style={{
-                  position: 'absolute',
-                  left: `${barX}%`,
-                  top: `${barY}%`,
-                  width: `${barSize}%`,
-                  pointerEvents: 'none',
-                  userSelect: 'none',
+                macroCrackStrands={macroCrackStrands} currentCrackParams={currentCrackParams}
+                photoBoxX={photoBoxX}
+                boxW={boxW} boxH={boxH}
+                crackScale={CRACK_SCALE}
+                scrubElapsed={scrubElapsed}
+                pusherX={pusherX} pusherY={pusherY + pusherDropPct}
+                pusherSize={pusherSize}
+                lcdX={lcdX} lcdY={lcdY} lcdKN={lcdKN} containerW={zoomLayerW}
+                showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
+                photoViewIsZooming={photoView === 'zooming'}
+                photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
+              showZoomUI={showZoomUI}
+                borderPx={borderPx}
+                effectivePhotoScale={effectivePhotoScale}
+                effectiveBoxBgAlpha={effectiveBoxBgAlpha}
+                photoBoxHovered={boxHovered} onPhotoBoxHover={setBoxHovered}
+                blueBoxHovered={blueBoxHovered} onBlueBoxHover={setBlueBoxHovered}
+                photoBoxRef={photoBoxRef}
+                photoBoxContent={<SimThumb srcRef={microSquareRef} opacity={effectiveThumbOpacity} />}
+                capLength={capLength} capAngle={capAngle}
+                onBoxClick={(box) => {
+                  if (box === 'grey') setGreyLayoutSeed(s => s + 1)
+                  handleBoxClick(box)
                 }}
               />
-
-              {/* Crack overlay — drawn on top of bar surface */}
-              {showPhotoCracks && (
-                <svg
-                  viewBox="0 0 100 100"
-                  preserveAspectRatio="none"
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
-                >
-                  {macroCrackStrands.flatMap((strand, si) => {
-                    const wm = currentCrackParams.widthMul
-                    const tp = currentCrackParams.taper
-                    const isScrubbable = testScrubOn && hasRecording
-                    const elapsed = isScrubbable ? scrubT * totalCrackMs : null
-                    const photoPts = strand.pts.map(([xn, yn]) => [
-                      photoBoxX + (xn - 0.5) * CRACK_X_FAC * boxW * CRACK_SCALE,
-                      crackOriginY + yn * CRACK_Y_FAC * boxH * CRACK_SCALE,
-                    ])
-                    const N = photoPts.length - 1
-                    return [
-                      ...(strand.fromTop ? [
-                        <path key="cap" d={strandToPhotoCapD(strand)}
-                          fill="none" stroke="#1a1008" strokeWidth={0.25 * wm} strokeLinecap="round" />,
-                        <path key="captip" d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none" />,
-                      ] : []),
-                      ...photoPts.slice(0, -1).map(([px0, py0], i) => {
-                        const [px1, py1] = photoPts[i + 1]
-                        const t = N <= 1 ? 0 : i / (N - 1)
-                        const w = 0.25 * wm * Math.max(0.03, 1 + tp * t)
-                        const segDur = strand.durationMs / N
-                        const segDelay = strand.delayMs + i * segDur
-                        const d = `M${px0.toFixed(2)},${py0.toFixed(2)} L${px1.toFixed(2)},${py1.toFixed(2)}`
-                        const pathStyle = isScrubbable
-                          ? { strokeDasharray: 1, strokeDashoffset: 1 - Math.max(0, Math.min(1, (elapsed - segDelay) / segDur)) }
-                          : { animation: `draw-crack ${segDur}ms ease-out ${segDelay}ms forwards` }
-                        return <path key={`${si}-${i}`} d={d} pathLength="1" className="crack"
-                          fill="none" stroke="#1a1008" strokeWidth={w} strokeLinecap="round" style={pathStyle} />
-                      }),
-                    ]
-                  })}
-                </svg>
-              )}
-
-              {/* Pusher overlay */}
-              <img
-                src="/concrete/Pusher.png"
-                draggable={false}
-                style={{
-                  position: 'absolute',
-                  left: `${pusherX}%`,
-                  top: `${pusherY + pusherDropPct}%`,
-                  width: `${pusherSize}%`,
-                  height: 'auto',
-                  transform: 'translateX(-50%)',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                }}
-              />
-
-              {/* LCD force readout — pinned to image like bar/pusher overlays */}
-              <div style={{
-                position: 'absolute', left: `${lcdX}%`, top: `${lcdY}%`,
-                transform: 'translate(-50%, -50%) rotate(3deg)', zIndex: 20,
-                pointerEvents: 'none', userSelect: 'none',
-                fontFamily: '"DSEG7", "Courier New", monospace',
-                fontSize: zoomLayerW * 0.0202, letterSpacing: '0.05em',
-                lineHeight: 1, width: zoomLayerW * 0.086,
-              }}>
-                <span style={{ color: 'rgba(60,60,60,0.18)', position: 'absolute', inset: 0, textAlign: 'right', userSelect: 'none' }}>8888</span>
-                <span style={{ color: 'rgba(60,60,60,0.72)', display: 'block', textAlign: 'right' }}>
-                  {Math.round(lcdKN)}
-                </span>
-              </div>
-
-              <div
-                ref={photoBoxRef}
-                className="photo-box"
-                style={photoBoxStyle}
-                onMouseEnter={() => setBoxHovered(true)}
-                onMouseLeave={() => setBoxHovered(false)}
-                onClick={() => handleBoxClick('red')}
-              >
-                <SimThumb srcRef={microSquareRef} opacity={effectiveThumbOpacity} />
-              </div>
-
-              {showBlueCrack && (
-                <div
-                  className="photo-box"
-                  style={{
-                    left:        `${blueBoxPos.x - boxW / 2}%`,
-                    top:         `${blueBoxPos.y - boxH / 2}%`,
-                    width:       `${boxW}%`,
-                    height:      `${boxH}%`,
-                    background:  'none',
-                    borderWidth: `${borderPx}px`,
-                    borderColor: blueBoxHovered ? '#4499ff' : '#2266cc',
-                    boxShadow:   blueBoxHovered
-                      ? `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${16/effectivePhotoScale}px rgba(30,100,220,0.9)`
-                      : `0 0 0 ${1/effectivePhotoScale}px rgba(0,0,0,0.6), 0 0 ${8/effectivePhotoScale}px rgba(30,100,220,0.5)`,
-                    pointerEvents: photoView === 'zooming' ? 'none' : 'auto',
-                  }}
-                  onMouseEnter={() => setBlueBoxHovered(true)}
-                  onMouseLeave={() => setBlueBoxHovered(false)}
-                  onClick={() => handleBoxClick('blue')}
-                />
-              )}
             </div>
           </div>
         )}

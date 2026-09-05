@@ -52,14 +52,14 @@ const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
 const COLOR_STOPS = [
   [0.00, 172, 167, 160],  // warm grey  — zero strain
-  [0.25, 255, 180, 230],  // light pink
-  [0.50, 255,  40, 180],  // hot pink
-  [0.75, 160,   0, 255],  // violet/purple
+  [0.10, 255, 180, 230],  // light pink — visible at 10% of break strain
+  [0.25, 255,  40, 180],  // hot pink   — at 25%
+  [0.65, 160,   0, 255],  // violet     — at 65%
   [1.00,   0, 200, 255],  // neon blue  — at break
 ]
 
 function strainColor(strain, breakStrain) {
-  const t = Math.min(1, Math.abs(strain) / breakStrain)
+  const t = Math.min(1, Math.abs(strain) / (breakStrain * 0.45))
   for (let k = 0; k < COLOR_STOPS.length - 1; k++) {
     const [t0, r0, g0, b0] = COLOR_STOPS[k]
     const [t1, r1, g1, b1] = COLOR_STOPS[k + 1]
@@ -672,10 +672,17 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
     const { jx, jy } = canvasJitter(i, t)
+    const px = vx(p) + jx, py = vy(p) + jy
     ctx.beginPath()
-    ctx.arc(vx(p) + jx, vy(p) + jy, p.r, 0, Math.PI * 2)
+    ctx.arc(px, py, p.r, 0, Math.PI * 2)
     ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
     ctx.fill()
+    if (p.type === 'O' && !p.isGrain) {
+      ctx.beginPath()
+      ctx.arc(px + 2.5, py - 2.5, 1.5, 0, Math.PI * 2)
+      ctx.fillStyle = 'white'
+      ctx.fill()
+    }
   }
 
   // ── Progressive crack path (draws top→bottom as fault bonds break) ──
@@ -811,10 +818,17 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
     const { jx, jy } = canvasJitter(i, t)
+    const px = xs[i] + jx, py = p.y0 + jy
     ctx.beginPath()
-    ctx.arc(xs[i] + jx, p.y0 + jy, p.r, 0, Math.PI * 2)
+    ctx.arc(px, py, p.r, 0, Math.PI * 2)
     ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
     ctx.fill()
+    if (p.type === 'O' && !p.isGrain) {
+      ctx.beginPath()
+      ctx.arc(px + 2.5, py - 2.5, 1.5, 0, Math.PI * 2)
+      ctx.fillStyle = 'white'
+      ctx.fill()
+    }
   }
 
   ctx.restore()
@@ -846,10 +860,11 @@ const C = {
   bg: '#ede8df', grain: '#d8cb98', stroke: '#a09050',
 }
 
-function LegendDot({ cx, cy, r, fill, label }) {
+function LegendDot({ cx, cy, r, fill, label, showH = false }) {
   return (
     <>
       <circle cx={cx} cy={cy} r={r} fill={fill} />
+      {showH && <circle cx={cx + 2.5} cy={cy - 2.5} r={1.5} fill="white" />}
       <text x={cx + r + 5} y={cy + 4} className="micro-legend">{label}</text>
     </>
   )
@@ -1049,12 +1064,19 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 
           {/* Matrix ions: shown at rest in idle; canvas draws them at physics positions during simulation */}
           {phase === 'idle' && ions.map((ion, i) => (
-            <circle key={i}
-              cx={ion.x} cy={ion.y} r={ion.r}
-              fill={ion.type === 'Ca' ? C.Ca : C.O}
-              opacity={1}
-              style={jitterStyle(i * 73 + 29)}
-            />
+            <g key={i}>
+              <circle
+                cx={ion.x} cy={ion.y} r={ion.r}
+                fill={ion.type === 'Ca' ? C.Ca : C.O}
+                opacity={1}
+                style={jitterStyle(i * 73 + 29)}
+              />
+              {ion.type === 'O' && (
+                <circle cx={ion.x + 2.5} cy={ion.y - 2.5} r={1.5}
+                  fill="white" opacity={1}
+                  style={jitterStyle(i * 73 + 29)} />
+              )}
+            </g>
           ))}
 
           {/* Sand grains */}
@@ -1114,16 +1136,16 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
           <LegendDot cx={6}   cy={0} r={4} fill={C.Si} label="Si" />
           <LegendDot cx={46}  cy={0} r={3} fill={C.O}  label="O (grain)" />
           <LegendDot cx={115} cy={0} r={4} fill={C.Ca} label="Ca²⁺" />
-          <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="O²⁻" />
+          <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="OH⁻" showH />
         </g>
 
         {/* Electric field color key */}
         <defs>
           <linearGradient id="field-grad" x1="0" x2="1" y1="0" y2="0">
             <stop offset="0%"   stopColor="rgb(172,167,160)" />
-            <stop offset="12%"  stopColor="rgb(255,180,230)" />
-            <stop offset="28%"  stopColor="rgb(255,40,180)" />
-            <stop offset="80%"  stopColor="rgb(160,0,255)" />
+            <stop offset="10%"  stopColor="rgb(255,180,230)" />
+            <stop offset="25%"  stopColor="rgb(255,40,180)" />
+            <stop offset="65%"  stopColor="rgb(160,0,255)" />
             <stop offset="100%" stopColor="rgb(0,200,255)" />
           </linearGradient>
         </defs>
@@ -1276,7 +1298,8 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         finalSnapRef.current = snap
         // Pre-fill 60 Phase 2 frames (p2Progress 0→1)
         for (let k = 0; k <= 60; k++) recordingRef.current.push({ type: 'p2', p2Progress: k / 60 })
-        onRecordingReady?.()
+        const p2Frac = (recordingRef.current.length - 61) / (recordingRef.current.length - 1)
+        onRecordingReady?.(p2Frac)
         onFailed?.()
         return
       }
@@ -1326,9 +1349,16 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         <g clipPath="url(#vb-clip)">
           <rect width={VW} height={VH} fill={C.bg} rx={4} />
           {phase === 'idle' && ions.map((ion, i) => (
-            <circle key={i} cx={ion.x} cy={ion.y} r={ion.r}
-              fill={ion.type === 'Ca' ? C.Ca : C.O} opacity={1}
-              style={jitterStyle(i * 73 + 29)} />
+            <g key={i}>
+              <circle cx={ion.x} cy={ion.y} r={ion.r}
+                fill={ion.type === 'Ca' ? C.Ca : C.O} opacity={1}
+                style={jitterStyle(i * 73 + 29)} />
+              {ion.type === 'O' && (
+                <circle cx={ion.x + 2.5} cy={ion.y - 2.5} r={1.5}
+                  fill="white" opacity={1}
+                  style={jitterStyle(i * 73 + 29)} />
+              )}
+            </g>
           ))}
           {grains.map((g, gi) => (
             <g key={g.id}>
@@ -1351,9 +1381,9 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         <defs>
           <linearGradient id="field-grad-b" x1="0" x2="1" y1="0" y2="0">
             <stop offset="0%"   stopColor="rgb(172,167,160)" />
-            <stop offset="12%"  stopColor="rgb(255,180,230)" />
-            <stop offset="28%"  stopColor="rgb(255,40,180)" />
-            <stop offset="80%"  stopColor="rgb(160,0,255)" />
+            <stop offset="10%"  stopColor="rgb(255,180,230)" />
+            <stop offset="25%"  stopColor="rgb(255,40,180)" />
+            <stop offset="65%"  stopColor="rgb(160,0,255)" />
             <stop offset="100%" stopColor="rgb(0,200,255)" />
           </linearGradient>
         </defs>
@@ -1370,7 +1400,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           <LegendDot cx={6}   cy={0} r={4} fill={C.Si} label="Si" />
           <LegendDot cx={46}  cy={0} r={3} fill={C.O}  label="O (grain)" />
           <LegendDot cx={115} cy={0} r={4} fill={C.Ca} label="Ca²⁺" />
-          <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="O²⁻" />
+          <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="OH⁻" showH />
         </g>
         <g transform={`translate(${VW - 178}, ${VH - 20})`}>
           <rect x={-4} y={-27} width={174} height={40} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
