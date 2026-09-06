@@ -386,7 +386,7 @@ export default function ConcreteViewer() {
   const [sandPct, setSandPct] = useState(40)
   const [phase, setPhase]     = useState('idle')
   const [force, setForce]     = useState(1000 / 2500)
-  const [layoutSeed, setLayoutSeed] = useState(0)
+  const [layoutSeed, setLayoutSeed] = useState(() => Math.round(Math.random() * 1e6))
   const [speedIdx, setSpeedIdx]     = useState(2)
 
   const [bondRound]  = useState(3)
@@ -508,9 +508,9 @@ export default function ConcreteViewer() {
 
   // Blue view — separate state, runs alongside red
   const [bluePhase,        setBluePhase]        = useState('idle')
-  const [blueLayoutSeed,   setBlueLayoutSeed]   = useState(1)
+  const [blueLayoutSeed,   setBlueLayoutSeed]   = useState(() => Math.round(Math.random() * 1e6))
   const [blueHasRecording, setBlueHasRecording] = useState(false)
-  const [greyLayoutSeed,   setGreyLayoutSeed]   = useState(1)
+  const [greyLayoutSeed,   setGreyLayoutSeed]   = useState(() => Math.round(Math.random() * 1e6))
   const photoStageRef  = useRef(null)
   const photoBoxRef    = useRef(null)
   const zoomLayerRef   = useRef(null)
@@ -600,12 +600,12 @@ export default function ConcreteViewer() {
   }, [macroCrackStrands, currentCrackParams.depth])
 
   function clearRecording() { setHasRecording(false); setScrubT(1) }
-  function startTest()  { breakFiredRef.current = false; breakThresholdRef.current = null; clearRecording(); setLayoutSeed(s => s + 1); setBlueLayoutSeed(s => s + 1); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null) }
+  function startTest()  { breakFiredRef.current = false; breakThresholdRef.current = null; clearRecording(); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null) }
   function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null) }
   function handleReplay() { clearRecording(); replayRef.current = true; setPhase('idle') }
 
   function handleSandPct(pct) {
-    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(s => s + 1); setBreakKN(null)
+    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null)
   }
 
   function handleRecordingReady(p2Frac) { setHasRecording(true); if (p2Frac != null) setP2StartFrac(p2Frac) }

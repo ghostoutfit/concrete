@@ -211,8 +211,6 @@ const GRAIN_CFG = {
   60: { count: 11, minCols: 3, maxCols: 6, minRows: 2, maxRows: 5 },
   80: { count: 18, minCols: 3, maxCols: 6, minRows: 2, maxRows: 5 },
 }
-const GRAIN_GRID = { 20: [3, 1], 40: [3, 2], 60: [4, 3], 80: [6, 3] }
-
 function grainDims(siCols, siRows) {
   return {
     w: (siCols - 1) * H_STEP + SI_PAD * 2,
@@ -224,35 +222,31 @@ export function buildGrains(sandPct, seed) {
   const cfg = GRAIN_CFG[sandPct]
   if (!cfg || cfg.count === 0) return []
   const rand = makeRand(seed)
-  const count = cfg.count
-  const [cols, rows] = GRAIN_GRID[sandPct] ?? [1, 1]
-  const cellW = VW / cols
-  const cellH = VH / rows
-  const cells = []
-  for (let r = 0; r < rows; r++)
-    for (let c = 0; c < cols; c++)
-      cells.push({ cx: (c + 0.5) * cellW, cy: (r + 0.5) * cellH })
-  for (let i = cells.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1))
-    ;[cells[i], cells[j]] = [cells[j], cells[i]]
-  }
   const grains = []
-  for (let i = 0; i < count; i++) {
+  const PAD = MATRIX_SPACING  // minimum gap between grain bounding boxes
+
+  for (let i = 0; i < cfg.count; i++) {
     const siCols = cfg.minCols + Math.round(rand() * (cfg.maxCols - cfg.minCols))
     const siRows = cfg.minRows + Math.round(rand() * (cfg.maxRows - cfg.minRows))
     const { w, h } = grainDims(siCols, siRows)
-    const { cx, cy } = cells[i]
-    const rawX = cx + (rand() - 0.5) * cellW * 0.40 - w / 2
-    const rawY = cy + (rand() - 0.5) * cellH * 0.40 - h / 2
-    const x0 = Math.round(rawX / MATRIX_SPACING) * MATRIX_SPACING
-    const crackX = VW / 2
-    const overlapsCrack = x0 < crackX + FAULT_CORRIDOR && x0 + w > crackX - FAULT_CORRIDOR
-    const minY = overlapsCrack ? MATRIX_SPACING : 0
-    const y = Math.max(Math.round(rawY / MATRIX_SPACING) * MATRIX_SPACING, minY)
-    // Phase-align so grain boundary O atoms face matrix Ca atoms (not matrix O)
-    const x = ((x0 / MATRIX_SPACING + y / MATRIX_SPACING) % 2 === 0) ? x0 : x0 + MATRIX_SPACING
-    grains.push({ x, y, w, h, id: i, siCols, siRows })
+
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const x0 = Math.round(rand() * (VW - w) / MATRIX_SPACING) * MATRIX_SPACING
+      const y0 = Math.round(rand() * (VH - h) / MATRIX_SPACING) * MATRIX_SPACING
+      // Phase-align so grain boundary O atoms face matrix Ca atoms (not matrix O)
+      const x = ((x0 / MATRIX_SPACING + y0 / MATRIX_SPACING) % 2 === 0) ? x0 : x0 + MATRIX_SPACING
+
+      if (x < 0 || x + w > VW || y0 < 0 || y0 + h > VH) continue
+      if (grains.some(g =>
+        x < g.x + g.w + PAD && x + w + PAD > g.x &&
+        y0 < g.y + g.h + PAD && y0 + h + PAD > g.y
+      )) continue
+
+      grains.push({ x, y: y0, w, h, id: i, siCols, siRows })
+      break
+    }
   }
+
   return grains
 }
 
