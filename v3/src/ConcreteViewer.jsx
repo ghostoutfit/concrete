@@ -470,14 +470,6 @@ export default function ConcreteViewer() {
     if (lcdKN >= breakThresholdRef.current) handleFailed(breakThresholdRef.current)
   }, [lcdKN, phase, sandPct])
 
-  useEffect(() => {
-    const el = zoomLayerRef.current
-    if (!el) return
-    const ro = new ResizeObserver(([e]) => setZoomLayerW(e.contentRect.width))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
   // Overlay image positioning
   const [pusherX,    setPusherX]    = useState(75.3)
   const [pusherY,    setPusherY]    = useState(-13)
@@ -515,6 +507,15 @@ export default function ConcreteViewer() {
   const photoBoxRef    = useRef(null)
   const zoomLayerRef   = useRef(null)
   const [zoomLayerW,   setZoomLayerW] = useState(800)
+
+  // Re-attach ResizeObserver whenever photo-zoom-layer mounts/unmounts (photoView changes)
+  useEffect(() => {
+    const el = zoomLayerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setZoomLayerW(e.contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [photoView])
   const zoomTimerRef   = useRef(null)
   const p2TimerRef     = useRef(null)
   const replayRef      = useRef(false)
