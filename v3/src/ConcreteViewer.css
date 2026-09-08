@@ -278,6 +278,35 @@ body {
     0 0 16px rgba(40,100,200,0.18);
 }
 
+/* ── control tabs ── */
+.tab-btn {
+  padding: 4px 11px 5px;
+  border-radius: 3px 3px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(200,215,230,0.45);
+  cursor: pointer;
+  outline: none;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+
+.tab-btn:hover {
+  color: rgba(200,215,230,0.75);
+  background: rgba(255,255,255,0.06);
+}
+
+.tab-btn.active {
+  color: #c8dcea;
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(160,200,230,0.25);
+  text-shadow: 0 0 10px rgba(140,200,255,0.3);
+}
+
 /* ── zoom checkbox ── */
 .zoom-checkbox-label {
   display: flex;
@@ -330,7 +359,7 @@ body {
 }
 
 .beam-photo {
-  width: 280px;
+  width: 308px;
   flex-shrink: 0;
   border-left: 2px solid #4a5e6e;
   display: flex;
