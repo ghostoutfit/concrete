@@ -34,16 +34,20 @@ jobs:
       - run: npm ci
         working-directory: v3
       - run: npm ci
+        working-directory: v4
+      - run: npm ci
 
-      # Build v1 → public/v1, v2 → public/v2, v3 → public/v3
+      # Build v1 → public/v1, v2 → public/v2, v3 → public/v3, v4 → public/v4
       - run: npm run build
         working-directory: v1
       - run: npm run build
         working-directory: v2
       - run: npm run build
         working-directory: v3
+      - run: npm run build
+        working-directory: v4
 
-      # Build root landing page — picks up public/v1, v2, v3 automatically
+      # Build root landing page — picks up public/v1, v2, v3, v4 automatically
       - run: npm run build
 
       - uses: actions/configure-pages@v4

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const V3_DEV_PORT = 5174
+const V4_DEV_PORT = 5175
 
 function serveBuiltFile(sub, url, res, next) {
   const rel = url.slice(`/concrete/${sub}/`.length) || 'index.html'
@@ -34,13 +35,18 @@ export default defineConfig({
     {
       name: 'serve-sub-apps',
       configureServer(server) {
-        // Auto-start v3 dev server; kill it when root server closes
+        // Auto-start v3 and v4 dev servers; kill them when root server closes
         const v3Dev = spawn('npm', ['run', 'dev'], {
           cwd: path.resolve(__dirname, 'v3'),
           stdio: 'inherit',
           shell: true,
         })
-        server.httpServer?.on('close', () => v3Dev.kill())
+        const v4Dev = spawn('npm', ['run', 'dev'], {
+          cwd: path.resolve(__dirname, 'v4'),
+          stdio: 'inherit',
+          shell: true,
+        })
+        server.httpServer?.on('close', () => { v3Dev.kill(); v4Dev.kill() })
 
         server.middlewares.use((req, res, next) => {
           // v3: proxy to live dev server, fall back to built files
@@ -57,6 +63,24 @@ export default defineConfig({
               pRes.pipe(res, { end: true })
             })
             proxy.on('error', () => serveBuiltFile('v3', req.url, res, next))
+            req.pipe(proxy, { end: true })
+            return
+          }
+
+          // v4: proxy to live dev server, fall back to built files
+          if (req.url === '/concrete/v4' || req.url.startsWith('/concrete/v4/')) {
+            const opts = {
+              hostname: 'localhost',
+              port: V4_DEV_PORT,
+              path: req.url,
+              method: req.method,
+              headers: { ...req.headers, host: `localhost:${V4_DEV_PORT}` },
+            }
+            const proxy = http.request(opts, pRes => {
+              res.writeHead(pRes.statusCode, pRes.headers)
+              pRes.pipe(res, { end: true })
+            })
+            proxy.on('error', () => serveBuiltFile('v4', req.url, res, next))
             req.pipe(proxy, { end: true })
             return
           }
