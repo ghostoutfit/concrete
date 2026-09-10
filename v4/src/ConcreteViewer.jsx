@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { generateCrack } from './MacroPanel'
-import { MicroPanelB, BondIcon, buildGrains, buildBlueGrains, buildBlueCrackWaypoints, VW, VH, buildPhysics, stepPhysics, stepPhysicsP2, snapshotP1, MAX_PUNCH_DISP, buildIons, buildLattice, FRACTURE_THRESHOLD, strainColor, COLOR_STOPS, COLOR_STOPS_LIGHT, MATRIX_SPACING } from './MicroPanel'
+import { MicroPanelB, BondIcon, buildGrains, buildBlueGrains, buildBlueCrackWaypoints, VW, VH, buildPhysics, stepPhysics, snapshotP1, MAX_PUNCH_DISP, buildIons, buildLattice, FRACTURE_THRESHOLD, strainColor, COLOR_STOPS, COLOR_STOPS_LIGHT, MATRIX_SPACING } from './MicroPanel'
 import './ConcreteViewer.css'
 
 const SAND_PRESETS = [0, 20, 40, 60, 80]
@@ -750,13 +750,9 @@ export default function ConcreteViewer() {
       if (foundBreakN !== null) break  // stop at first break; spring-back handles the rest
     }
 
-    // Spring-back: 61 frames (0→1), boundary rows follow time-based displacement,
-    // interior particles relax from current positions through bond forces.
-    const p2BreakDisp = phys.currentDisp
-    for (let k = 0; k <= 60; k++) {
-      const p2T = k / 60
-      stepPhysicsP2(phys, p2BreakDisp * (1 - p2T))
-      recording.push(snapshotP1(phys, 0, 0))
+    // Crack-open frames — same format as the ratio-tab break handler so drawPhase2Scene is used
+    for (let i = 0; i <= 40; i++) {
+      recording.push({ type: 'p2', p2Progress: i / 40 })
     }
 
     setManualP2T(0)  // reset auto-play on recording rebuild
