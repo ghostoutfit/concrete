@@ -1102,32 +1102,27 @@ export default function ConcreteViewer() {
                 </div>
               )}
               <div className="toolbar-divider" />
-              {/* Right: theme toggle + speed slider */}
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4 }}>
+              {/* Right: LCD force readout + theme toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{
+                  color: '#e4ddd0', fontSize: 18, fontWeight: 700, minWidth: 80,
+                  textAlign: 'center', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em',
+                  textShadow: '0 1px 3px rgba(0,0,0,0.6)',
+                }}>
+                  {phase === 'failed' && breakKN != null
+                    ? `${breakKN} kN`
+                    : `${Math.round(lcdKN / 100) / 10} kN`}
+                </div>
                 <button
                   className={`action-btn replay-btn${!darkMode ? ' active' : ''}`}
                   onClick={() => setDarkMode(f => !f)}
-                  title="Toggle light/dark mode"
                   style={{
-                    fontSize: 18,
-                    padding: '3px 9px 4px',
-                    lineHeight: 1,
+                    fontSize: 18, padding: '3px 9px 4px', lineHeight: 1,
                     textShadow: darkMode
                       ? '0 0 8px rgba(180,210,255,0.95), 0 0 18px rgba(120,170,255,0.6)'
                       : '0 0 8px rgba(255,220,50,0.95), 0 0 18px rgba(255,160,0,0.65)',
                   }}
                 >{darkMode ? '☽' : '☀'}</button>
-                <div className="toolbar-divider" />
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  <span style={{ fontSize: 8, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.45)' }}>Speed</span>
-                  <input
-                    type="range" min={0} max={SPEEDS.length - 1} step={1}
-                    value={speedIdx}
-                    onChange={e => setSpeedIdx(Number(e.target.value))}
-                    style={{ width: 72, accentColor: '#5a90d0' }}
-                  />
-                  <span style={{ fontSize: 8, letterSpacing: '0.06em', color: 'rgba(200,215,230,0.55)', fontVariantNumeric: 'tabular-nums' }}>{SPEEDS[speedIdx]}×</span>
-                </div>
               </div>
             </div>
           ) : !manualRecording ? (
@@ -1344,11 +1339,11 @@ export default function ConcreteViewer() {
                   { key: 'now',    label: 'Now',    getCell: d => ({ val: tested ? d.now : null, bold: false }) },
                   { key: 'broken', label: 'Broken', getCell: d => ({
                     val: tested ? d.broken : null,
-                    pct: tested && d.before > 0 ? (d.broken / d.before * 100).toFixed(1) : null,
+                    pct: tested && d.before > 0 ? d.broken / d.before * 100 : null,
                     bold: true,
                   }) },
                   { key: 'total', label: 'Total', getCell: d => ({
-                    pct: tested && totalBroken > 0 ? (d.broken / totalBroken * 100).toFixed(1) : null,
+                    pct: tested && totalBroken > 0 ? d.broken / totalBroken * 100 : null,
                     bold: false,
                   }) },
                 ]
@@ -1372,10 +1367,13 @@ export default function ConcreteViewer() {
                           const { val, pct, bold } = getCell(d)
                           return (
                             <div key={d.key} style={{ textAlign: 'center' }}>
-                              {pct != null && (
-                                <div style={{ fontSize: 12, color: d.color, opacity: 0.85, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, fontWeight: bold ? 700 : 500 }}>{pct}%</div>
+                              {val != null && (
+                                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500, lineHeight: 1.1 }}>{val}</div>
                               )}
-                              {pct == null && (
+                              {pct != null && (
+                                <div style={{ fontSize: 10, color: d.color, opacity: 0.75, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{Math.round(pct)}%</div>
+                              )}
+                              {val == null && pct == null && (
                                 <span style={{ fontSize: 12, color: darkMode ? '#333' : '#bbb' }}>—</span>
                               )}
                             </div>
