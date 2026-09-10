@@ -1224,19 +1224,28 @@ export default function ConcreteViewer() {
         {photoView === 'off' && (
           <div className="force-viz-space">
             {/* Particle key */}
-            <div style={{ display: 'flex', justifyContent: 'space-around', flexShrink: 0, padding: '0 6px' }}>
-              {[
-                { particles: [{ x: 0, y: 0, r: 4,   type: 'Si' }],                       label: <><b>Si</b> <sup>δ+</sup></> },
-                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: true }],        label: <><b>O</b> <sup>δ−</sup></>  },
-                { particles: [{ x: 0, y: 0, r: 5.5, type: 'Ca' }],                       label: <><b>Ca</b> <sup>2+</sup></>  },
-                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: false }],       label: <><b>OH</b><sup>−</sup></>    },
-              ].map(({ particles, label }, i) => (
-                <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                  <BondIcon particles={particles} bonds={[]} scale={1.5} darkMode={darkMode} showCharge={chargeVisible} />
-                  <span style={{ fontSize: 11, color: darkMode ? '#999' : '#666', fontFamily: 'system-ui,sans-serif' }}>{label}</span>
+            {(() => {
+              const atoms = [
+                { particles: [{ x: 0, y: 0, r: 4,   type: 'Si' }],                 label: <><b>Si</b> <sup>δ+</sup></> },
+                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: true }],  label: <><b>O</b> <sup>δ−</sup></>  },
+                { particles: [{ x: 0, y: 0, r: 5.5, type: 'Ca' }],                 label: <><b>Ca</b> <sup>2+</sup></>  },
+                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: false }], label: <><b>OH</b><sup>−</sup></>    },
+              ]
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', flexShrink: 0, padding: '0 6px', rowGap: 3 }}>
+                  {atoms.map(({ particles }, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                      <BondIcon particles={particles} bonds={[]} scale={1.5} darkMode={darkMode} showCharge={chargeVisible} />
+                    </div>
+                  ))}
+                  {atoms.map(({ label }, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, color: darkMode ? '#999' : '#666', fontFamily: 'system-ui,sans-serif' }}>{label}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )
+            })()}
             {/* Bond strain key */}
             {showField && (
               <svg viewBox="0 0 200 60" width="100%" style={{ display: 'block', flexShrink: 0 }}>
