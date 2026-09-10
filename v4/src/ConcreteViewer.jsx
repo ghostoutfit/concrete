@@ -1421,7 +1421,7 @@ export default function ConcreteViewer() {
               sandPct={panelSandPct}
               phase={isManual ? (manualRecording ? 'failed' : 'idle') : (phase === 'failed' && !hasRecording ? 'testing' : phase)}
               layoutSeed={layoutSeed}
-              force={panelForce} speed={speed} bondRound={bondRound} noDiag
+              force={panelForce} speed={speed} bondRound={bondRound} noDiag showDiag={showDevSliders}
               onSettled={isManual ? () => {} : handleSettled}
               onFailed={isManual ? () => {} : handleFailed}
               scrubT={isManual ? manualScrubT : (photoView === 'off' && hasRecording ? scrubT : null)}
@@ -1443,7 +1443,7 @@ export default function ConcreteViewer() {
               sandPct={panelSandPct}
               phase={isManual ? 'idle' : bluePhase}
               layoutSeed={blueLayoutSeed}
-              force={isManual ? 0 : panelForce} speed={speed} bondRound={bondRound} noDiag
+              force={isManual ? 0 : panelForce} speed={speed} bondRound={bondRound} noDiag showDiag={showDevSliders}
               grainOverride={blueGrains}
               crackWaypoints={blueCrackWaypoints}
               accentColor="#3d6fd4"
@@ -1463,7 +1463,7 @@ export default function ConcreteViewer() {
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             <MicroPanelB
               sandPct={panelSandPct} phase="idle" layoutSeed={greyLayoutSeed}
-              force={0} speed={1} bondRound={bondRound} noDiag
+              force={0} speed={1} bondRound={bondRound} noDiag showDiag={showDevSliders}
               accentColor="#111111"
               onSettled={() => {}} onFailed={() => {}}
               scrubT={null}
