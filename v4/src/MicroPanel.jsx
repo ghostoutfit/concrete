@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
 
 export const VW = 600
 export const VH = 350
@@ -39,7 +39,7 @@ const BOND_BREAK = {
   'cc-near': 0.035,
   'cc-diag': 0.020,
   'ss':      0.08,
-  'cs':      0.18,   // high threshold — cs bonds stretch visibly before breaking
+  'cs':      0.010,  // weaker than bulk cement — interface debonds before cement cracks
 }
 const P2_SNAP_RAMP = 0.40  // fraction of Phase 2 each particle spends sliding; wide so many rows overlap
 const P2_JITTER    = 0.05  // per-particle random offset breaks row synchronisation
@@ -51,18 +51,24 @@ const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 // Continuous strain colour: near-bg → navy → amber → red.
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
 export const COLOR_STOPS = [
-  [0.00, 172, 167, 160],  // warm grey  — zero strain
-  [0.10, 255, 180, 230],  // light pink — visible at 10% of break strain
-  [0.25, 255,  40, 180],  // hot pink   — at 25%
-  [0.65, 160,   0, 255],  // violet     — at 65%
-  [1.00,   0, 200, 255],  // neon blue  — at break
+  [0.00, 200, 196, 188],  // light warm grey — visible on dark bg
+  [0.20, 195,  90, 255],  // bright violet
+  [0.55, 240,  30, 225],  // vivid magenta-purple
+  [1.00, 255,  70, 185],  // hot pink — at break
+]
+export const COLOR_STOPS_LIGHT = [
+  [0.00, 172, 167, 160],  // warm grey
+  [0.20, 190, 100, 220],  // light purple
+  [0.55, 150,  20, 200],  // deep purple
+  [1.00, 255,  40, 160],  // hot pink
 ]
 
-export function strainColor(strain, breakStrain) {
+export function strainColor(strain, breakStrain, dark = true) {
+  const stops = dark ? COLOR_STOPS : COLOR_STOPS_LIGHT
   const t = Math.min(1, Math.abs(strain) / (breakStrain * 0.45))
-  for (let k = 0; k < COLOR_STOPS.length - 1; k++) {
-    const [t0, r0, g0, b0] = COLOR_STOPS[k]
-    const [t1, r1, g1, b1] = COLOR_STOPS[k + 1]
+  for (let k = 0; k < stops.length - 1; k++) {
+    const [t0, r0, g0, b0] = stops[k]
+    const [t1, r1, g1, b1] = stops[k + 1]
     if (t <= t1) {
       const u = (t - t0) / (t1 - t0)
       return `rgb(${Math.round(r0+(r1-r0)*u)},${Math.round(g0+(g1-g0)*u)},${Math.round(b0+(b1-b0)*u)})`
@@ -115,59 +121,193 @@ function smoothPath(pts) {
 
 export function buildCrackWaypoints(grains, sandPct = 0) {
   const midX = VW / 2
-  const waypoints = [{ x: midX, y: 0 }]
-  if (grains.length === 0) {
-    waypoints.push({ x: midX, y: VH })
-    return waypoints
+  if (grains.length === 0) return [{ x: midX, y: 0 }, { x: midX, y: VH }]
+
+  const obs = grains.map(g => ({ x1: g.x, x2: g.x + g.w, y1: g.y, y2: g.y + g.h }))
+
+  // Strict-interior checks — paths ON grain faces are allowed
+  function vBlocked(px, ya, yb) {
+    return obs.some(o => px > o.x1 && px < o.x2 && ya < o.y2 && yb > o.y1)
   }
-  const margin = 10
-  const obs = grains.map(g => ({
-    x1: g.x - margin, y1: g.y - margin,
-    x2: g.x + g.w + margin, y2: g.y + g.h + margin,
-  }))
-  let curX = midX, curY = 0
-  for (let iters = 0; curY < VH && iters < 300; iters++) {
-    const next = obs
-      .filter(o => o.y2 > curY && o.x1 < curX && o.x2 > curX)
-      .sort((a, b) => a.y1 - b.y1)[0]
-    if (!next) break
-    const distLeft = curX - next.x1
-    const distRight = next.x2 - curX
-    let routeX = distLeft <= distRight ? next.x1 : next.x2
-    routeX = Math.max(6, Math.min(VW - 6, routeX))
-    const approachY = Math.max(next.y1, curY)
-    if (approachY > curY + 1) waypoints.push({ x: curX, y: approachY })
-    waypoints.push({ x: routeX, y: approachY })
-    waypoints.push({ x: routeX, y: next.y2 })
-    curY = next.y2
-    curX = routeX
+  function hBlocked(py, xa, xb) {
+    const lo = Math.min(xa, xb), hi = Math.max(xa, xb)
+    return obs.some(o => py > o.y1 && py < o.y2 && lo < o.x2 && hi > o.x1)
   }
-  waypoints.push({ x: curX, y: VH })
+  // Cement cost of a horizontal segment: zero for portions along a grain top/bottom face.
+  function hCost(py, xa, xb) {
+    let len = Math.abs(xb - xa)
+    const lo = Math.min(xa, xb), hi = Math.max(xa, xb)
+    for (const o of obs) {
+      if (py === o.y1 || py === o.y2)
+        len -= Math.max(0, Math.min(hi, o.x2) - Math.max(lo, o.x1))
+    }
+    return Math.max(0, len)
+  }
+  // Cement cost of a vertical segment: zero for portions running along a grain
+  // left/right face (Si-OH bonds break there).
+  function vCost(px, ya, yb) {
+    let len = yb - ya
+    for (const o of obs) {
+      if (px === o.x1 || px === o.x2)
+        len -= Math.max(0, Math.min(yb, o.y2) - Math.max(ya, o.y1))
+    }
+    return Math.max(0, len)
+  }
 
-  // Sand-proportional jitter: subdivide vertical segments with a correlated
-  // random walk so more sand = more jagged crack.
+  // Crop boundaries — grain faces on these lines have edge-protected (unbreakable) bonds,
+  // so the trajectory must stay strictly inside and never seek those faces.
+  const CROP_X0 = (VW - VH) / 2
+  const CROP_X1 = (VW + VH) / 2
 
-  const maxDev = sandPct * 0.25   // 0 → 20 SVG units across the sand range
-  if (maxDev < 1) return waypoints
-
-  const seed = grains.reduce((s, g) => (Math.imul(s, 31) + g.x * 17 + g.y * 7) | 0, 42)
-  const rand = makeRand(seed)
-  const JSTEP = MATRIX_SPACING * 2   // vertical spacing between jitter knots
-
-  const out = []
-  for (let k = 0; k < waypoints.length - 1; k++) {
-    const a = waypoints[k], b = waypoints[k + 1]
-    out.push(a)
-    if (Math.abs(b.x - a.x) > 1) continue           // skip horizontal segments
-    if (b.y - a.y < JSTEP * 2) continue              // too short to jitter
-    let dev = 0
-    for (let y = a.y + JSTEP; y < b.y - JSTEP * 0.5; y += JSTEP) {
-      dev = dev * 0.60 + (rand() - 0.5) * maxDev    // AR(1): correlated but mean-reverting
-      out.push({ x: Math.max(8, Math.min(VW - 8, a.x + dev)), y })
+  // Graph nodes: start + grain corners that are strictly inside the crop window
+  const nodes = [{ x: midX, y: 0 }]
+  for (const o of obs) {
+    for (const [nx, ny] of [[o.x1, o.y1], [o.x2, o.y1], [o.x1, o.y2], [o.x2, o.y2]]) {
+      if (nx > CROP_X0 && nx < CROP_X1) nodes.push({ x: nx, y: ny })
     }
   }
-  out.push(waypoints[waypoints.length - 1])
-  return out
+  const N = nodes.length
+
+  // Edge cost: penalise cement traversal, reward grain-face traversal.
+  // Grain vertical faces carry Si-OH bonds — we actively want to cut those.
+  // No face bonus for faces at the crop boundary (bonds there are unbreakable).
+  // No negative cycles exist (we only move downward), so Bellman-Ford is safe.
+  const FACE_BONUS = 10.0  // reward per px of vertical grain-face traversal
+  function edgeCost(ux, uy, vx, vy) {
+    const vCem  = vCost(vx, uy, vy)
+    const insideCrop = vx > CROP_X0 && vx < CROP_X1
+    const vFace = insideCrop ? (vy - uy) - vCem : 0
+    return hCost(uy, ux, vx) + vCem - FACE_BONUS * vFace
+  }
+
+  const dist = new Float32Array(N).fill(1e9)
+  const prev = new Int32Array(N).fill(-1)
+  dist[0] = 0
+
+  // Bellman-Ford — O(N³), N ≤ ~25 so trivially fast; handles negative edge costs
+  for (let iter = 0; iter < N - 1; iter++) {
+    let changed = false
+    for (let u = 0; u < N; u++) {
+      if (dist[u] >= 1e9) continue
+      const { x: ux, y: uy } = nodes[u]
+      for (let v = 0; v < N; v++) {
+        if (u === v) continue
+        const { x: vx, y: vy } = nodes[v]
+        if (vy < uy) continue                              // only move downward
+        if (hBlocked(uy, ux, vx)) continue                // horizontal leg blocked
+        if (vy > uy && vBlocked(vx, uy, vy)) continue     // vertical leg blocked
+        const cost = edgeCost(ux, uy, vx, vy)
+        if (dist[u] + cost < dist[v]) { dist[v] = dist[u] + cost; prev[v] = u; changed = true }
+      }
+    }
+    if (!changed) break
+  }
+
+  // Best terminal: minimum total cost including final vertical drop to y=VH
+  let bestU = -1, bestD = 1e9
+  for (let i = 0; i < N; i++) {
+    if (vBlocked(nodes[i].x, nodes[i].y, VH)) continue
+    const { x: tx, y: ty } = nodes[i]
+    const total = dist[i] + edgeCost(tx, ty, tx, VH)
+    if (total < bestD) { bestD = total; bestU = i }
+  }
+  if (bestU < 0) return [{ x: midX, y: 0 }, { x: midX, y: VH }]
+
+  // Trace back
+  const path = []
+  for (let cur = bestU; cur >= 0; cur = prev[cur]) path.unshift(nodes[cur])
+
+  // Emit waypoints; insert horizontal transition point wherever x changes
+  const waypoints = []
+  for (let i = 0; i < path.length; i++) {
+    waypoints.push({ x: path[i].x, y: path[i].y })
+    if (i + 1 < path.length && Math.abs(path[i].x - path[i + 1].x) > 0.5)
+      waypoints.push({ x: path[i + 1].x, y: path[i].y })
+  }
+  waypoints.push({ x: path[path.length - 1].x, y: VH })
+  return waypoints
+}
+
+// Route the crack through actual cs bond midpoints grouped by grain face column.
+// Called inside buildPhysics after bonds are built and stamped.
+function computeCrackPath(bonds, particles) {
+  const midX = VW / 2
+  const CROP_X0 = (VW - VH) / 2
+  const CROP_X1 = (VW + VH) / 2
+
+  // Group non-diagonal inCrop non-edgeProtected cs bond midpoints by x column (grain face)
+  const faceMap = new Map()
+  for (const b of bonds) {
+    if (b.diagonal || !b.inCrop || b.edgeProtected || b.type !== 'cs') continue
+    const pi = particles[b.i], pj = particles[b.j]
+    const mx = (pi.x0 + pj.x0) / 2
+    const my = (pi.y0 + pj.y0) / 2
+    if (mx <= CROP_X0 + MATRIX_SPACING * 2 || mx >= CROP_X1 - MATRIX_SPACING * 2) continue
+    const key = Math.round(mx * 4)               // round to nearest 0.25 px — bonds on same face share exact x
+    if (!faceMap.has(key)) faceMap.set(key, { x: mx, minY: my, maxY: my })
+    else { const f = faceMap.get(key); f.minY = Math.min(f.minY, my); f.maxY = Math.max(f.maxY, my) }
+  }
+
+  if (faceMap.size === 0) return [{ x: midX, y: 0 }, { x: midX, y: VH }]
+  const faces = Array.from(faceMap.values())
+
+  // Nodes: source + (top, bottom) of each grain-face column
+  const nodes = [{ x: midX, y: 0 }]
+  for (const f of faces) {
+    nodes.push({ x: f.x, y: f.minY }, { x: f.x, y: f.maxY })
+  }
+  const N = nodes.length
+
+  const H_PENALTY  = 3   // cost per px horizontal (cement gap between faces)
+  const FACE_BONUS = 10  // reward per px vertical grain-face traversal (Si-OH bonds)
+
+  function edgeCost(ux, uy, vx, vy) {
+    const f    = faceMap.get(Math.round(vx * 4))
+    const face = f ? Math.max(0, Math.min(vy, f.maxY) - Math.max(uy, f.minY)) : 0
+    return Math.abs(vx - ux) * H_PENALTY + (vy - uy - face) - FACE_BONUS * face
+  }
+
+  const dist = new Float32Array(N).fill(1e9)
+  const prev = new Int32Array(N).fill(-1)
+  dist[0] = 0
+
+  // Bellman-Ford on downward DAG — no negative cycles possible
+  for (let iter = 0; iter < N - 1; iter++) {
+    let changed = false
+    for (let u = 0; u < N; u++) {
+      if (dist[u] >= 1e9) continue
+      const { x: ux, y: uy } = nodes[u]
+      for (let v = 0; v < N; v++) {
+        if (u === v) continue
+        const { x: vx, y: vy } = nodes[v]
+        if (vy <= uy) continue
+        const cost = edgeCost(ux, uy, vx, vy)
+        if (dist[u] + cost < dist[v]) { dist[v] = dist[u] + cost; prev[v] = u; changed = true }
+      }
+    }
+    if (!changed) break
+  }
+
+  // Best terminal: min (path cost + remaining cement tail to VH)
+  let bestU = -1, bestD = 1e9
+  for (let i = 1; i < N; i++) {
+    if (dist[i] >= 1e9) continue
+    const total = dist[i] + (VH - nodes[i].y)
+    if (total < bestD) { bestD = total; bestU = i }
+  }
+  if (bestU < 0) return [{ x: midX, y: 0 }, { x: midX, y: VH }]
+
+  const path = []
+  for (let cur = bestU; cur >= 0; cur = prev[cur]) path.unshift(nodes[cur])
+
+  const waypoints = []
+  for (let i = 0; i < path.length; i++) {
+    waypoints.push({ x: path[i].x, y: path[i].y })
+    if (i + 1 < path.length && Math.abs(path[i].x - path[i + 1].x) > 0.5)
+      waypoints.push({ x: path[i + 1].x, y: path[i].y })
+  }
+  waypoints.push({ x: path[path.length - 1].x, y: VH })
+  return waypoints
 }
 
 // ── Blue view grain + crack (big grain stops crack) ───────────
@@ -360,12 +500,12 @@ export function buildPhase2Disps(particles, crackWaypoints, p2DispScale = 1) {
         const yLo = s.a.y, yHi = s.b.y
         if (p.y0 < yLo - 0.5 || p.y0 > yHi + 0.5) continue
         const yFrac = (p.y0 - yLo) / (yHi - yLo)
-        // Include one layer of left-adjacent particles (within FAULT_CORRIDOR) so the crack
-        // face is clean — these atoms were bonded to the crack zone and move with the right block.
         const crackX = s.a.x + (s.b.x - s.a.x) * yFrac
+        const base = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
+        const frac = Math.max(0, Math.min(1 - P2_SNAP_RAMP, base + (p2Hash(i) - 0.5) * P2_JITTER))
         if (p.x0 >= crackX - FAULT_CORRIDOR) {
-          const base = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
-          p2frac[i] = Math.max(0, Math.min(1 - P2_SNAP_RAMP, base + (p2Hash(i) - 0.5) * P2_JITTER))
+          // Right block — snap right
+          p2frac[i] = frac
           p2disp[i] = 2 * MATRIX_SPACING * p2DispScale
           break
         }
@@ -406,10 +546,11 @@ export function buildPhase2Disps(particles, crackWaypoints, p2DispScale = 1) {
       const yLo = s.a.y, yHi = s.b.y
       if (g.cy < yLo - 0.5 || g.cy > yHi + 0.5) continue
       const yFrac = (g.cy - yLo) / (yHi - yLo)
-      if (g.cx >= Math.min(s.a.x, s.b.x)) {
-        const base = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
-        const frac = Math.max(0, Math.min(1 - P2_SNAP_RAMP, base + (p2Hash(gKey * 997 + 1) - 0.5) * P2_JITTER))
-        for (const i of g.indices) { p2frac[i] = frac; p2disp[i] = 2 * MATRIX_SPACING * p2DispScale }
+      const crackXg = s.a.x + (s.b.x - s.a.x) * yFrac
+      const baseG = (s.f0 + yFrac * (s.f1 - s.f0)) * (1 - P2_SNAP_RAMP - P2_JITTER * 0.5)
+      const fracG = Math.max(0, Math.min(1 - P2_SNAP_RAMP, baseG + (p2Hash(gKey * 997 + 1) - 0.5) * P2_JITTER))
+      if (g.cx >= crackXg - FAULT_CORRIDOR) {
+        for (const i of g.indices) { p2frac[i] = fracG; p2disp[i] = 2 * MATRIX_SPACING * p2DispScale }
         break
       }
     }
@@ -419,7 +560,7 @@ export function buildPhase2Disps(particles, crackWaypoints, p2DispScale = 1) {
 }
 
 // ── Physics engine ─────────────────────────────────────────────
-export function buildPhysics(ions, grains, lattices, crackWaypoints, p2DispScale = 1) {
+export function buildPhysics(ions, grains, lattices, p2DispScale = 1, noDiag = false, crackWaypointsOverride = null) {
   // Build particle list: matrix ions first, then grain atoms
   const particles = []
 
@@ -452,7 +593,6 @@ export function buildPhysics(ions, grains, lattices, crackWaypoints, p2DispScale
     const pi = particles[i]
     for (let j = i + 1; j < n; j++) {
       const pj = particles[j]
-
       const dx = pj.x - pi.x, dy = pj.y - pi.y
       const d = Math.hypot(dx, dy)
 
@@ -462,35 +602,50 @@ export function buildPhysics(ions, grains, lattices, crackWaypoints, p2DispScale
       } else if (pi.isGrain && pj.isGrain && pi.grainIdx === pj.grainIdx) {
         if (d <= GRAIN_BOND && (pi.type === 'Si') !== (pj.type === 'Si')) bondType = 'ss'
       } else if (pi.isGrain !== pj.isGrain) {
-        // Cement-sand interface bonds. Grains are clamped deep enough that these
-        // form laterally (grain sides ↔ adjacent matrix), not vertically above the
-        // grain where compression would snap them immediately.
         if (d <= IFACE_BOND) bondType = 'cs'
       }
-
       if (!bondType) continue
 
-      const punchBreak = BOND_BREAK[bondType]
-
-      // Pre-weaken bonds along the predetermined crack fault path.
-      // Grain internal bonds (ss) are excluded — the crack runs through matrix only.
-      // Softer K means fault bonds deform more than bulk bonds at the same load,
-      // making them visibly strained even at low force levels.
-      const midBx = (pi.x0 + pj.x0) / 2
-      const midBy = (pi.y0 + pj.y0) / 2
-      const onFault = bondType !== 'ss' && distToPath(midBx, midBy, crackWaypoints) < FAULT_CORRIDOR
-
+      const diagonal = Math.abs(dx) > 2 && Math.abs(dy) > 2
+      if (noDiag && diagonal) continue
       bonds.push({
         i, j,
         restLen: d,
-        k:          onFault ? BOND_K[bondType] * FAULT_K_FACTOR    : BOND_K[bondType],
-        breakStrain: onFault ? punchBreak * FAULT_BREAK_FACTOR       : punchBreak,
+        k:           BOND_K[bondType],
+        breakStrain: BOND_BREAK[bondType],
         strain: 0,
         broken: false,
         type: bondType,
-        isFault: onFault,
-        diagonal: Math.abs(dx) > 2 && Math.abs(dy) > 2,
+        isFault: false,   // applied in second pass after crack path is known
+        diagonal,
       })
+    }
+  }
+
+  // Stamp each bond with inCrop, fieldAlpha, edgeProtected
+  const CROP_X0 = (VW - VH) / 2
+  const CROP_X1 = (VW + VH) / 2
+  for (const b of bonds) {
+    const pi = particles[b.i], pj = particles[b.j]
+    b.inCrop = pi.x0 >= CROP_X0 && pi.x0 <= CROP_X1 && pj.x0 >= CROP_X0 && pj.x0 <= CROP_X1
+    b.fieldAlpha = bondDistAlpha(b.restLen)
+    const atEdge = pi.x0 <= CROP_X0 || pi.x0 >= CROP_X1 || pj.x0 <= CROP_X0 || pj.x0 >= CROP_X1
+    if (atEdge) { b.breakStrain = Infinity; b.edgeProtected = true }
+  }
+
+  // Compute crack path from actual cs bond positions (or use provided override for blue panel)
+  const crackWaypoints = crackWaypointsOverride ?? computeCrackPath(bonds, particles)
+
+  // Second pass: apply fault pre-weakening now that the crack path is known
+  for (const b of bonds) {
+    if (b.edgeProtected || b.type === 'ss') continue
+    const pi = particles[b.i], pj = particles[b.j]
+    const midBx = (pi.x0 + pj.x0) / 2
+    const midBy = (pi.y0 + pj.y0) / 2
+    if (distToPath(midBx, midBy, crackWaypoints) < FAULT_CORRIDOR) {
+      b.k           = BOND_K[b.type]    * FAULT_K_FACTOR
+      b.breakStrain = BOND_BREAK[b.type] * FAULT_BREAK_FACTOR
+      b.isFault = true
     }
   }
 
@@ -513,7 +668,7 @@ export function buildPhysics(ions, grains, lattices, crackWaypoints, p2DispScale
 
   const { p2frac, p2disp } = buildPhase2Disps(particles, crackWaypoints, p2DispScale)
 
-  return { particles, bonds, n, matrixCount, fx, fy, currentDisp: 0, grains, grainParticles, grainCentroids, grainCsBonds, p2frac, p2disp }
+  return { particles, bonds, n, matrixCount, fx, fy, currentDisp: 0, grains, grainParticles, grainCentroids, grainCsBonds, p2frac, p2disp, crackWaypoints }
 }
 
 export function stepPhysics(phys, forceVal, speed = 1, canBreak = true) {
@@ -527,15 +682,13 @@ export function stepPhysics(phys, forceVal, speed = 1, canBreak = true) {
   for (let sub = 0; sub < SUBSTEPS; sub++) {
     phys.currentDisp += rampPerSub
 
-    // All particles — matrix and grain — follow the same per-atom kinematic rubber-band.
-    // Each atom is displaced by the field at its own rest position, so grain atoms track
-    // the adjacent cement atoms and the Si-O alignment across the interface is preserved.
+    // Kinematic baseline: each atom displaced by field at its rest position.
     for (let i = 0; i < n; i++) {
       const p = particles[i]
       p.x = p.x0 + phys.currentDisp * (p.x0 / VW) * Math.max(0, 1.0 - p.y0 / VH)
     }
 
-    // Bond strains and fracture
+    // Bond strains and fracture (based on kinematic positions)
     for (let b = 0; b < bonds.length; b++) {
       const bond = bonds[b]
       if (bond.broken) continue
@@ -543,13 +696,83 @@ export function stepPhysics(phys, forceVal, speed = 1, canBreak = true) {
       const dx = pj.x - pi.x, dy = pj.y - pi.y
       const d = Math.hypot(dx, dy)
       if (d < 0.001) continue
-      const strain = (d - bond.restLen) / bond.restLen
-      bond.strain = strain
-      if (canBreak && Math.abs(strain) > bond.breakStrain) bond.broken = true
+      bond.strain = (d - bond.restLen) / bond.restLen
+      if (canBreak && Math.abs(bond.strain) > bond.breakStrain) bond.broken = true
+    }
+  }
+
+  // Spring relaxation: let particles settle under bond forces given the broken topology.
+  // Boundary rows (top=driven, bottom=support) stay fixed at their kinematic positions.
+  // Interior particles find equilibrium — bonds adjacent to breaks snap back visibly.
+  relaxPhysics(phys, 60)
+
+  // Second break pass on relaxed positions. cs (interface) bonds have near-zero
+  // kinematic strain because grain atoms and adjacent matrix particles share nearly
+  // identical x0, so the kinematic field moves them by the same amount. Their actual
+  // stress only appears after PBD lets the grain and matrix deform relative to each other.
+  if (canBreak) {
+    for (let b = 0; b < bonds.length; b++) {
+      const bond = bonds[b]
+      if (bond.broken) continue
+      if (Math.abs(bond.strain) > bond.breakStrain) bond.broken = true
     }
   }
 
   return 0
+}
+
+// Spring-back step: set punch to targetDisp (time-controlled by caller), apply kinematic
+// ONLY to boundary rows, then relax interior particles from their current positions.
+// Interior particles are never reset to the global kinematic baseline — they find their
+// true new equilibrium through bond forces given the broken topology.
+export function stepPhysicsP2(phys, targetDisp) {
+  phys.currentDisp = targetDisp
+  const { particles } = phys
+  for (let i = 0; i < phys.n; i++) {
+    const p = particles[i]
+    if (p.y0 < MATRIX_SPACING || p.y0 > VH - MATRIX_SPACING) {
+      p.x = p.x0 + phys.currentDisp * (p.x0 / VW) * Math.max(0, 1.0 - p.y0 / VH)
+    }
+  }
+  relaxPhysics(phys, 60)
+}
+
+// Position-Based Dynamics relaxation: iteratively project each non-broken bond
+// toward its rest length. Boundary particles are held fixed.
+function relaxPhysics(phys, iters) {
+  const { particles, bonds } = phys
+  // Top row driven by punch; bottom row on support — both stay at kinematic positions.
+  const fixed = p => p.y0 < MATRIX_SPACING || p.y0 > VH - MATRIX_SPACING
+
+  for (let iter = 0; iter < iters; iter++) {
+    for (let b = 0; b < bonds.length; b++) {
+      const bond = bonds[b]
+      if (bond.broken) continue
+      const pi = particles[bond.i], pj = particles[bond.j]
+      const fi = fixed(pi), fj = fixed(pj)
+      if (fi && fj) continue
+      const dx = pj.x - pi.x, dy = pj.y - pi.y
+      const d = Math.hypot(dx, dy)
+      if (d < 0.001) continue
+      // Fractional correction along bond axis
+      const corr = (d - bond.restLen) / d
+      const wi = fi ? 0 : 1, wj = fj ? 0 : 1
+      const total = wi + wj
+      pi.x += (wi / total) * corr * dx
+      pi.y += (wi / total) * corr * dy
+      pj.x -= (wj / total) * corr * dx
+      pj.y -= (wj / total) * corr * dy
+    }
+  }
+
+  // Recompute strains from relaxed positions for rendering and recording
+  for (let b = 0; b < bonds.length; b++) {
+    const bond = bonds[b]
+    if (bond.broken) continue
+    const pi = particles[bond.i], pj = particles[bond.j]
+    const d = Math.hypot(pj.x - pi.x, pj.y - pi.y)
+    if (d > 0.001) bond.strain = (d - bond.restLen) / bond.restLen
+  }
 }
 
 // Seeded per-particle thermal jitter for canvas drawing.
@@ -603,7 +826,7 @@ function fillLens(ctx, ax, ay, bx, by, bondRound) {
   const ux = (bx - ax) / len, uy = (by - ay) / len  // along bond
   const px = -uy, py = ux                             // perpendicular
   const mx = (ax + bx) / 2, my = (ay + by) / 2
-  const halfL = Math.min(len * 0.40, 7)
+  const halfL = len * 0.40
   const r  = Math.min(bondRound, halfL * 0.65)  // cap prevents circular look
   const cp = halfL * 0.45                        // control-point offset — governs tip sharpness
   ctx.beginPath()
@@ -622,51 +845,41 @@ function fillLens(ctx, ax, ay, bx, by, bondRound) {
 }
 
 // ── Force data for selected particle ──────────────────────────
-function computeForceData(phys, idx) {
-  const { particles, bonds } = phys
-  const p = particles[idx]
-  if (!p) return null
-  // Use rest positions (x0,y0) — matches drawScene(visualScale=0) coordinate space
-  const neighbors = []
-  for (const bond of bonds) {
-    const isI = bond.i === idx, isJ = bond.j === idx
-    if (!isI && !isJ) continue
-    const oi = isI ? bond.j : bond.i
-    const o = particles[oi]
-    const dx = o.x0 - p.x0, dy = o.y0 - p.y0
-    const dist = Math.hypot(dx, dy)
-    if (dist < 0.001) continue
-    const Fmag = bond.k * bond.strain * bond.restLen
-    neighbors.push({ type: o.type, isGrain: o.isGrain, r: o.r, dx, dy, fx: Fmag * dx / dist, fy: Fmag * dy / dist, strain: bond.strain, bondType: bond.type, broken: bond.broken, diagonal: bond.diagonal, isFault: bond.isFault, k: bond.k, breakStrain: bond.breakStrain, restLen: bond.restLen })
-  }
-  return { idx, type: p.type, isGrain: p.isGrain, r: p.r, neighbors }
+
+// Charge values: Ca=+2, Si=+0.5, grain O=-0.5, cement O (OH)=-1
+function particleCharge(p) {
+  if (p.type === 'Ca') return 2
+  if (p.type === 'Si') return 0.5
+  return p.isGrain ? -0.5 : -1
+}
+const CHARGE_POS = '231,131,42'  // warm orange — positive (δ+, 2+)
+const CHARGE_NEG = '62,127,214'  // cool blue  — negative (δ−, −)
+
+// Alpha ramp: full at rest-length ≤ 110% of MATRIX_SPACING, fades to 0 by 170%
+function bondDistAlpha(restLen) {
+  const lo = MATRIX_SPACING * 1.1
+  const hi = MATRIX_SPACING * 1.7
+  if (restLen <= lo) return 1
+  if (restLen >= hi) return 0
+  const t = (restLen - lo) / (hi - lo)
+  return Math.pow(1 - t, 3)   // cubic: near-zero by √2 spacing (~t=0.52)
 }
 
-function drawSelectionRing(canvas, phys, idx, visualX = null, visualY = null) {
-  if (!canvas || !phys || idx === null || idx < 0) return
-  const p = phys.particles[idx]
-  if (!p) return
-  const dpr = window.devicePixelRatio || 1
-  const W = canvas.clientWidth, H = canvas.clientHeight
-  if (!W || !H) return
-  const scale = Math.min(W / (VW * 0.9), H / VH) * dpr
-  const offsetX = (W * dpr - VW * scale) / 2
-  const offsetY = (H * dpr - VH * scale) / 2
-  // Use provided visual position (phase 2 displaced) or fall back to rest position
-  const vpx = visualX !== null ? visualX : p.x0
-  const vpy = visualY !== null ? visualY : p.y0
-  const ctx = canvas.getContext('2d')
-  ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
-  ctx.beginPath()
-  ctx.arc(vpx, vpy, p.r + 4, 0, Math.PI * 2)
-  ctx.strokeStyle = 'rgba(255,220,0,0.9)'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
+// Reusable offscreen canvas for field blur batching (one blur composite per frame)
+const fieldLayerCache = new WeakMap()
+function getFieldLayer(canvas) {
+  let layer = fieldLayerCache.get(canvas)
+  if (!layer || layer.width !== canvas.width || layer.height !== canvas.height) {
+    layer = document.createElement('canvas')
+    layer.width  = canvas.width
+    layer.height = canvas.height
+    fieldLayerCache.set(canvas, layer)
+  }
+  return layer
 }
 
 // ── Canvas scene rendering (atoms + bonds at physics positions) ──
-function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag = false, visualScale = VISUAL_SCALE, bondRound = 1.6, showField = true) {
+function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag = false, visualScale = VISUAL_SCALE, bondRound = 1.6, showField = true, showCharge = false, darkMode = true) {
   if (!canvas) return
   const dpr = window.devicePixelRatio || 1
   const W   = canvas.clientWidth
@@ -683,16 +896,18 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
   const ctx = canvas.getContext('2d')
   ctx.clearRect(0, 0, cw, ch)
 
-  // Match SVG xMidYMid meet transform, cropped 5% each side
-  const scale   = Math.min(W / (VW * 0.9), H / VH) * dpr
+  const scale   = (H / VH) * dpr
   const offsetX = (W * dpr - VW * scale) / 2
-  const offsetY = (H * dpr - VH * scale) / 2
+  const offsetY = 0
   ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
 
   ctx.save()
   ctx.beginPath()
   ctx.rect(0, 0, VW, VH)
   ctx.clip()
+
+  ctx.fillStyle = darkMode ? C.bg : '#ede8df'
+  ctx.fillRect(0, 0, VW, VH)
 
   const { particles, bonds, matrixCount } = phys
 
@@ -702,26 +917,36 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
   const vx = p => p.x0 + (p.x - p.x0) * visualScale
   const vy = p => p.y0 + (p.y - p.y0) * visualScale
 
-  // ── Bonds: continuous per-bond colour interpolated from strain ──
+  // ── Bonds: draw field lenses to offscreen layer, composite with one blur ──
   if (showField) {
-    ctx.globalAlpha = 0.50
+    const layer = getFieldLayer(canvas)
+    const lctx  = layer.getContext('2d')
+    lctx.clearRect(0, 0, layer.width, layer.height)
+    const { a, b: mb, c, d, e, f } = ctx.getTransform()
+    lctx.setTransform(a, mb, c, d, e, f)
     for (let b = 0; b < bonds.length; b++) {
       const bond = bonds[b]
       if (bond.broken) continue
       if (!showDiag && bond.diagonal) continue
+      if (bond.fieldAlpha <= 0) continue
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha
       const pi = particles[bond.i], pj = particles[bond.j]
-      const ax = vx(pi), ay = vy(pi), bx = vx(pj), by = vy(pj)
-      ctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
-      fillLens(ctx, ax, ay, bx, by, bondRound)
-      ctx.fill()
-      ctx.strokeStyle = bond.type === 'cs' ? '#ffffff' : '#000000'
-      ctx.lineWidth = bond.type === 'cs' ? 1.2 : 0.8
-      ctx.stroke()
+      lctx.fillStyle = strainColor(bond.strain, bond.breakStrain, darkMode)
+      fillLens(lctx, vx(pi), vy(pi), vx(pj), vy(pj), bondRound)
+      lctx.fill()
     }
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.filter = 'blur(3px)'
     ctx.globalAlpha = 1
+    ctx.drawImage(layer, 0, 0)
+    ctx.filter = 'none'
+    ctx.restore()
   }
 
   // ── All atoms at amplified physics positions + thermal jitter ──
+  const atomStroke = darkMode ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.22)'
+  ctx.lineWidth = 0.5
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
     const { jx, jy } = canvasJitter(i, t)
@@ -730,12 +955,45 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
     ctx.arc(px, py, p.r, 0, Math.PI * 2)
     ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
     ctx.fill()
+    ctx.strokeStyle = atomStroke
+    ctx.stroke()
     if (p.type === 'O' && !p.isGrain) {
       ctx.beginPath()
       ctx.arc(px + 2.5, py - 2.5, 1.5, 0, Math.PI * 2)
       ctx.fillStyle = 'white'
       ctx.fill()
     }
+    if (showCharge) {
+      const q = particleCharge(p)
+      const rgb = q > 0 ? CHARGE_POS : CHARGE_NEG
+      const alpha = 0.30 + (Math.abs(q) / 2) * 0.50
+      const cr = 8
+      const grad = ctx.createRadialGradient(px, py, 0, px, py, cr)
+      grad.addColorStop(0, `rgba(${rgb},${alpha.toFixed(3)})`)
+      grad.addColorStop(1, `rgba(${rgb},0)`)
+      ctx.beginPath()
+      ctx.arc(px, py, cr, 0, Math.PI * 2)
+      ctx.fillStyle = grad
+      ctx.fill()
+    }
+  }
+
+  // ── Bond strain labels (×1000, computed live from actual positions) ──
+  ctx.font = '3.5px system-ui'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  for (let b = 0; b < bonds.length; b++) {
+    const bond = bonds[b]
+    if (bond.broken) continue
+    if (!showDiag && bond.diagonal) continue
+    const pi = particles[bond.i], pj = particles[bond.j]
+    const mx = (vx(pi) + vx(pj)) / 2
+    const my = (vy(pi) + vy(pj)) / 2
+    const actualDist = Math.hypot(pj.x - pi.x, pj.y - pi.y)
+    const strain = (actualDist - bond.restLen) / bond.restLen
+    const label = String(Math.round(Math.abs(strain) * 1000))
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'
+    ctx.fillText(label, mx, my)
   }
 
   // ── Progressive crack path (draws top→bottom as fault bonds break) ──
@@ -779,7 +1037,7 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
 // sweeps from 0→1 top-to-bottom. p2Progress is driven by crackFraction.
 const HANG_MS = 260
 
-function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6, hangStart = null, showField = true, crackWaypoints = null, shake = true) {
+function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6, hangStart = null, showField = true, crackWaypoints = null, shake = true, showCharge = false, darkMode = true) {
   if (!canvas || !phys) return
   const dpr = window.devicePixelRatio || 1
   const W = canvas.clientWidth
@@ -792,9 +1050,9 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
   // Clear to transparent so the dark panel background shows outside the red border
   ctx.clearRect(0, 0, cw, ch)
 
-  const scale   = Math.min(W / (VW * 0.9), H / VH) * dpr
+  const scale   = (H / VH) * dpr
   const offsetX = (W * dpr - VW * scale) / 2
-  const offsetY = (H * dpr - VH * scale) / 2
+  const offsetY = 0
   ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY)
 
   // Clip to the viewbox so atoms shifted beyond the right edge stay hidden
@@ -803,7 +1061,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
   ctx.rect(0, 0, VW, VH)
   ctx.clip()
 
-  ctx.fillStyle = C.bg
+  ctx.fillStyle = darkMode ? C.bg : '#ede8df'
   ctx.fillRect(0, 0, VW, VH)
 
   // Seismic shake — strongest at crack initiation, done by p2Progress = 0.5
@@ -830,23 +1088,47 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
 
   // ── Bonds ── (skip bonds that span the crack — one end shifted, other not)
   if (showField) {
-    ctx.globalAlpha = 0.50
+    const layer = getFieldLayer(canvas)
+    const lctx  = layer.getContext('2d')
+    lctx.clearRect(0, 0, layer.width, layer.height)
+    const { a, b: mb, c, d, e, f } = ctx.getTransform()
+    lctx.setTransform(a, mb, c, d, e, f)
     for (let b = 0; b < bonds.length; b++) {
       const bond = bonds[b]
       if (!showDiag && bond.diagonal) continue
-      const iShifted = xs[bond.i] > particles[bond.i].x0 + 0.01
-      const jShifted = xs[bond.j] > particles[bond.j].x0 + 0.01
-      if (iShifted !== jShifted) continue   // spans the crack — broken
       const ax = xs[bond.i], ay = particles[bond.i].y0
       const bx = xs[bond.j], by = particles[bond.j].y0
-      ctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
-      fillLens(ctx, ax, ay, bx, by, bondRound)
-      ctx.fill()
-      ctx.strokeStyle = bond.type === 'cs' ? '#ffffff' : '#000000'
-      ctx.lineWidth = bond.type === 'cs' ? 1.2 : 0.8
-      ctx.stroke()
+      // iShifted: right-block particle that has snapped (xs moved rightward from x0)
+      const iShifted = xs[bond.i] > particles[bond.i].x0 + 0.01
+      const jShifted = xs[bond.j] > particles[bond.j].x0 + 0.01
+      if (iShifted !== jShifted) {
+        // Bond spans the crack — fade out as particles separate
+        const curLen = Math.hypot(bx - ax, by - ay)
+        const stretch = Math.max(0, curLen - bond.restLen) / bond.restLen
+        const alpha = Math.max(0, 1 - stretch * 2)
+        if (alpha > 0) {
+          lctx.globalAlpha = alpha * (darkMode ? 0.85 : 0.65)
+          lctx.fillStyle = strainColor(bond.strain, bond.breakStrain, darkMode)
+          fillLens(lctx, ax, ay, bx, by, bondRound)
+          lctx.fill()
+        }
+        continue
+      }
+      if (bond.fieldAlpha <= 0) continue
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha
+      const actualLen = Math.hypot(bx - ax, by - ay)
+      const actualStrain = (actualLen - bond.restLen) / bond.restLen
+      lctx.fillStyle = strainColor(actualStrain, bond.breakStrain, darkMode)
+      fillLens(lctx, ax, ay, bx, by, bondRound)
+      lctx.fill()
     }
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.filter = 'blur(3px)'
     ctx.globalAlpha = 1
+    ctx.drawImage(layer, 0, 0)
+    ctx.filter = 'none'
+    ctx.restore()
   }
 
   // ── Bright-blue hang: flash broken bonds at peak colour before they vanish ──
@@ -870,6 +1152,8 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
   }
 
   // ── All atoms displaced + thermal jitter ──
+  const atomStroke2 = darkMode ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.22)'
+  ctx.lineWidth = 0.5
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i]
     const { jx, jy } = canvasJitter(i, t)
@@ -878,10 +1162,25 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     ctx.arc(px, py, p.r, 0, Math.PI * 2)
     ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
     ctx.fill()
+    ctx.strokeStyle = atomStroke2
+    ctx.stroke()
     if (p.type === 'O' && !p.isGrain) {
       ctx.beginPath()
       ctx.arc(px + 2.5, py - 2.5, 1.5, 0, Math.PI * 2)
       ctx.fillStyle = 'white'
+      ctx.fill()
+    }
+    if (showCharge) {
+      const q = particleCharge(p)
+      const rgb = q > 0 ? CHARGE_POS : CHARGE_NEG
+      const alpha = 0.30 + (Math.abs(q) / 2) * 0.50
+      const cr = 8
+      const grad = ctx.createRadialGradient(px, py, 0, px, py, cr)
+      grad.addColorStop(0, `rgba(${rgb},${alpha.toFixed(3)})`)
+      grad.addColorStop(1, `rgba(${rgb},0)`)
+      ctx.beginPath()
+      ctx.arc(px, py, cr, 0, Math.PI * 2)
+      ctx.fillStyle = grad
       ctx.fill()
     }
   }
@@ -912,7 +1211,7 @@ function jitterStyle(idx) {
 
 const C = {
   Si: '#d4a020', O: '#cc3a3a', Ca: '#706a6a',
-  bg: '#ede8df', grain: '#d8cb98', stroke: '#a09050',
+  bg: '#111111', grain: '#d8cb98', stroke: '#a09050',
 }
 
 function LegendDot({ cx, cy, r, fill, label, showH = false }) {
@@ -950,82 +1249,109 @@ function hasBreakthroughPath(bonds, particles) {
   return covered[0] && covered[1]
 }
 
-// ── ForcePanel: selected-particle force visualization ─────────
-export function ForcePanel({ data }) {
-  const containerStyle = {
-    width: '100%', background: C.bg, borderRadius: 6,
-    overflow: 'hidden', border: `1px solid ${C.bg}`,
+
+// ── BondIcon: canvas-rendered bond pair using exact same draw code as main view ──
+export function BondIcon({ particles, bonds, scale = 1.5, darkMode = true, showCharge = false }) {
+  const canvasRef = useRef(null)
+  const PAD = 6  // must accommodate glow radius = p.r * 2
+  // bounding box
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity
+  for (const p of particles) {
+    x0 = Math.min(x0, p.x - p.r - PAD)
+    x1 = Math.max(x1, p.x + p.r + PAD)
+    y0 = Math.min(y0, p.y - p.r - PAD)
+    y1 = Math.max(y1, p.y + p.r + PAD)
+    if (p.type === 'O' && !p.isGrain) {
+      x1 = Math.max(x1, p.x + 2.5 + 1.5 + PAD)
+      y0 = Math.min(y0, p.y - 2.5 - 1.5 - PAD)
+    }
   }
-  const VR = MATRIX_SPACING * 3  // fixed zoom: 48 world units
-  if (!data) {
-    return (
-      <div style={{ ...containerStyle, aspectRatio: '1/1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <span style={{ color: 'rgba(40,35,30,0.35)', fontSize: 11, fontFamily: 'system-ui,sans-serif', textAlign: 'center', lineHeight: 1.5 }}>
-          Click a particle<br/>to inspect forces
-        </span>
-      </div>
-    )
-  }
-  const { type, isGrain, r, neighbors } = data
-  // Only show unbroken orthogonal bonds — broken bonds have no force, no particle pulling
-  const active = neighbors.filter(n => !n.diagonal && !n.broken)
-  const atomColor = t => t === 'Ca' ? C.Ca : t === 'Si' ? C.Si : C.O
-  const arrowColor = 'rgba(40,35,30,0.8)'
-  return (
-    <div style={containerStyle}>
-      <svg width="100%" viewBox={`${-VR} ${-VR} ${VR * 2} ${VR * 2}`} style={{ display: 'block' }}>
-        <rect x={-VR} y={-VR} width={VR * 2} height={VR * 2} fill={C.bg} />
-        {active.map((n, i) => {
-          const dist = Math.hypot(n.dx, n.dy)
-          if (dist < 0.001) return null
-          return (
-            <g key={`nb-${i}`}>
-              <line x1={0} y1={0} x2={n.dx} y2={n.dy} stroke="rgba(40,35,30,0.25)" strokeWidth={1.1} />
-              <circle cx={n.dx} cy={n.dy} r={n.r} fill={atomColor(n.type)} opacity={0.4} />
-              {n.type === 'O' && !n.isGrain && (
-                <circle cx={n.dx + 2.5} cy={n.dy - 2.5} r={1.5} fill="white" opacity={0.4} />
-              )}
-            </g>
-          )
-        })}
-        {active.map((n, i) => {
-          const dist = Math.hypot(n.dx, n.dy)
-          if (dist < 0.001) return null
-          // Direction: toward neighbor for tension/zero, away for compression
-          const sign = n.strain >= 0 ? 1 : -1
-          const ux = sign * n.dx / dist, uy = sign * n.dy / dist
-          // Tip must clear the selected particle circle; grows with strain beyond that
-          const MIN = r + 6
-          const len = MIN + VR * 0.4 * Math.min(1, Math.abs(n.strain) / n.breakStrain)
-          const ex = ux * len, ey = uy * len
-          const ahL = Math.max(2, Math.min(5, len * 0.22))
-          const ahW = ahL * 0.5
-          return (
-            <g key={i}>
-              <line x1={0} y1={0} x2={ex} y2={ey} stroke={arrowColor} strokeWidth={1.5} opacity={0.9} />
-              <polygon
-                points={`${ex.toFixed(2)},${ey.toFixed(2)} ${(ex - ux * ahL + uy * ahW).toFixed(2)},${(ey - uy * ahL - ux * ahW).toFixed(2)} ${(ex - ux * ahL - uy * ahW).toFixed(2)},${(ey - uy * ahL + ux * ahW).toFixed(2)}`}
-                fill={arrowColor} opacity={0.9} />
-            </g>
-          )
-        })}
-        <circle cx={0} cy={0} r={r} fill={atomColor(type)} />
-        {type === 'O' && !isGrain && (
-          <circle cx={2.5} cy={-2.5} r={1.5} fill="white" />
-        )}
-      </svg>
-    </div>
-  )
+  const cssW = Math.round((x1 - x0) * scale)
+  const cssH = Math.round((y1 - y0) * scale)
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = cssW * dpr
+    canvas.height = cssH * dpr
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    const s = scale * dpr
+    const tx = -x0 * s, ty = -y0 * s
+    ctx.setTransform(s, 0, 0, s, tx, ty)
+    // bonds on offscreen layer → blur → composite
+    const layer = document.createElement('canvas')
+    layer.width = canvas.width
+    layer.height = canvas.height
+    const lctx = layer.getContext('2d')
+    lctx.setTransform(s, 0, 0, s, tx, ty)
+    for (const bond of bonds) {
+      const pa = particles[bond.i], pb = particles[bond.j]
+      lctx.globalAlpha = darkMode ? 0.82 : 0.60
+      lctx.fillStyle = strainColor(0, 1, darkMode)
+      fillLens(lctx, pa.x, pa.y, pb.x, pb.y, 1.6)
+      lctx.fill()
+    }
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.filter = 'blur(3px)'
+    ctx.drawImage(layer, 0, 0)
+    ctx.filter = 'none'
+    ctx.restore()
+    ctx.setTransform(s, 0, 0, s, tx, ty)
+    // particles — glow halo + solid fill + charge overlay, matching drawScene exactly
+    const stroke = darkMode ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.22)'
+    const rgbOf = (p) => p.type === 'Ca' ? '112,106,106' : p.type === 'Si' ? '212,160,32' : '204,58,58'
+    ctx.lineWidth = 0.5
+    for (const p of particles) {
+      // Glow halo (mimics blurred bond-lens bleed in the main view)
+      const glowR = p.r * 2
+      const glowAlpha = darkMode ? 0.55 : 0.38
+      const glow = ctx.createRadialGradient(p.x, p.y, p.r * 0.3, p.x, p.y, glowR)
+      glow.addColorStop(0, `rgba(${rgbOf(p)},${glowAlpha})`)
+      glow.addColorStop(1, `rgba(${rgbOf(p)},0)`)
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2)
+      ctx.fillStyle = glow
+      ctx.fill()
+      // Solid particle
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+      ctx.fillStyle = p.type === 'Ca' ? C.Ca : p.type === 'Si' ? C.Si : C.O
+      ctx.fill()
+      ctx.strokeStyle = stroke
+      ctx.stroke()
+      if (p.type === 'O' && !p.isGrain) {
+        ctx.beginPath()
+        ctx.arc(p.x + 2.5, p.y - 2.5, 1.5, 0, Math.PI * 2)
+        ctx.fillStyle = 'white'
+        ctx.fill()
+      }
+      // Charge overlay — radial gradient, same as drawScene
+      if (showCharge) {
+        const q = p.type === 'Ca' ? 2 : p.type === 'Si' ? 0.5 : (p.isGrain ? -0.5 : -1)
+        const rgb = q > 0 ? CHARGE_POS : CHARGE_NEG
+        const alpha = 0.30 + (Math.abs(q) / 2) * 0.50
+        const cr = p.r * 2
+        const cGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, cr)
+        cGrad.addColorStop(0, `rgba(${rgb},${alpha.toFixed(3)})`)
+        cGrad.addColorStop(1, `rgba(${rgb},0)`)
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, cr, 0, Math.PI * 2)
+        ctx.fillStyle = cGrad
+        ctx.fill()
+      }
+    }
+  })
+  return <canvas ref={canvasRef} style={{ display: 'block', width: cssW, height: cssH }} />
 }
 
 // ── MicroPanel component ───────────────────────────────────────
-export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, onSettled, onFailed, scrubT = null, onRecordingReady }) {
-  const grains             = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
-  const ions               = useMemo(() => buildIons(grains), [grains])
-  const lattices           = useMemo(() => grains.map(buildLattice), [grains])
-  const crackWaypointsSelf = useMemo(() => buildCrackWaypoints(grains, sandPct), [grains, sandPct])
-  const crackWaypoints     = crackWaypointsProp ?? crackWaypointsSelf
-  const crackD             = useMemo(() => smoothPath(crackWaypoints), [crackWaypoints])
+export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, onSettled, onFailed, scrubT = null, onRecordingReady }) {
+  const grains   = useMemo(() => buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42), [sandPct, layoutSeed])
+  const ions     = useMemo(() => buildIons(grains), [grains])
+  const lattices = useMemo(() => grains.map(buildLattice), [grains])
+  const [crackD, setCrackD] = useState('')
 
   const svgRef    = useRef(null)
   const canvasRef = useRef(null)
@@ -1051,22 +1377,26 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 
   // Rebuild physics whenever layout changes
   useEffect(() => {
-    physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints)
-  }, [ions, grains, lattices, crackWaypoints])
+    const phys = buildPhysics(ions, grains, lattices)
+    physRef.current = phys
+    setCrackD(smoothPath(phys.crackWaypoints))
+  }, [ions, grains, lattices])
 
   // RAF loop: run when testing, stop otherwise
   useEffect(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
 
     if (phase === 'idle') {
-      physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints)
+      const phys = buildPhysics(ions, grains, lattices)
+      physRef.current = phys
+      setCrackD(smoothPath(phys.crackWaypoints))
       stableRef.current = 0
       dispForceRef.current = 0
       crackFractionRef.current = 0
       recordingRef.current = []
       finalSnapRef.current = null
       function idleLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0, bondRoundRef.current)
+        drawScene(canvasRef.current, physRef.current, 0, physRef.current?.crackWaypoints, ts, false, 0, bondRoundRef.current)
         rafRef.current = requestAnimationFrame(idleLoop)
       }
       rafRef.current = requestAnimationFrame(idleLoop)
@@ -1086,9 +1416,9 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
         if (st !== null && rec.length > 0) {
           const snap = rec[Math.round(st * (rec.length - 1))]
           applyP1Snapshot(physRef.current, snap)
-          drawScene(canvasRef.current, physRef.current, snap.cf, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
+          drawScene(canvasRef.current, physRef.current, snap.cf, physRef.current?.crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
         } else {
-          drawScene(canvasRef.current, physRef.current, crackFractionRef.current, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
+          drawScene(canvasRef.current, physRef.current, crackFractionRef.current, physRef.current?.crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
         }
         rafRef.current = requestAnimationFrame(drawLoop)
       }
@@ -1121,7 +1451,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
       const crackFraction = faultBonds.length > 0 ? faultBroken / faultBonds.length : 0
       crackFractionRef.current = crackFraction
 
-      drawScene(canvasRef.current, phys, crackFraction, crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
+      drawScene(canvasRef.current, phys, crackFraction, phys.crackWaypoints, ts, showDiagRef.current, VISUAL_SCALE, bondRoundRef.current)
       frameCount++
 
       // Record every other frame
@@ -1265,27 +1595,27 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
         {/* Electric field color key */}
         <defs>
           <linearGradient id="field-grad" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%"   stopColor="rgb(172,167,160)" />
-            <stop offset="10%"  stopColor="rgb(255,180,230)" />
-            <stop offset="25%"  stopColor="rgb(255,40,180)" />
-            <stop offset="65%"  stopColor="rgb(160,0,255)" />
-            <stop offset="100%" stopColor="rgb(0,200,255)" />
+            <stop offset="0%"   stopColor="rgb(200,196,188)" />
+            <stop offset="20%"  stopColor="rgb(195,90,255)" />
+            <stop offset="55%"  stopColor="rgb(240,30,225)" />
+            <stop offset="100%" stopColor="rgb(255,70,185)" />
           </linearGradient>
         </defs>
-        <g transform={`translate(${VW - 278}, ${VH - 20})`}>
-          <rect x={-4} y={-27} width={174} height={40} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
+        <g transform={`translate(${VW - 278}, ${VH - 43})`}>
+          <rect x={-4} y={-27} width={174} height={63} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
           {/* Bond type row */}
           <rect x={0} y={-25} width={32} height={16} fill={C.bg} rx={2} />
-          <ellipse cx={11} cy={-17} rx={12} ry={4} fill="rgb(172,167,160)" stroke="white" strokeWidth={1.8} />
+          <ellipse cx={11} cy={-17} rx={12} ry={4} fill="rgb(200,196,188)" stroke="white" strokeWidth={1.8} />
           <text x={27} y={-13} className="micro-legend">IMF</text>
           <rect x={62} y={-25} width={40} height={16} fill={C.bg} rx={2} />
-          <ellipse cx={73} cy={-17} rx={12} ry={4} fill="rgb(172,167,160)" stroke="#111" strokeWidth={1.0} />
+          <ellipse cx={73} cy={-17} rx={12} ry={4} fill="rgb(200,196,188)" stroke="#111" strokeWidth={1.0} />
           <text x={89} y={-13} className="micro-legend">Bond</text>
-          {/* Electric field row */}
-          <text x={0} y={1} className="micro-legend">Bond strain:</text>
-          <rect x={78} y={-9} width={84} height={12} fill="url(#field-grad)" />
-          <text x={78} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>low</text>
-          <text x={162} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }} textAnchor="end">high</text>
+          {/* Electric field label */}
+          <text x={0} y={5} style={{ fontSize: '16px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>Energy in fields:</text>
+          {/* Electric field gradient + Low/High */}
+          <rect x={0} y={10} width={166} height={10} fill="url(#field-grad)" />
+          <text x={0} y={31} style={{ fontSize: '16px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>Low</text>
+          <text x={166} y={31} style={{ fontSize: '16px', fill: '#888', fontFamily: 'system-ui,sans-serif' }} textAnchor="end">High</text>
         </g>
       </svg>
     </div>
@@ -1293,16 +1623,14 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 }
 
 // ── View B: Phase 1 (bonds stress, atoms at rest) → Phase 2 (bonds break, atoms displace) ──
-export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, scrubT = null, onRecordingReady, p2DispScale = 1, showField = true, selectedParticleIdx = null, onParticleClick, onForceData, preloadedRecording = null }) {
-  const grains             = useMemo(
+export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, noDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, onBreakStart, scrubT = null, onRecordingReady, p2DispScale = 1, showField = true, showCharge = false, onBondCounts, preloadedRecording = null, darkMode = true }) {
+  const grains   = useMemo(
     () => grainOverride ?? buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42),
     [sandPct, layoutSeed, grainOverride]
   )
-  const ions               = useMemo(() => buildIons(grains), [grains])
-  const lattices           = useMemo(() => grains.map(buildLattice), [grains])
-  const crackWaypointsSelf = useMemo(() => buildCrackWaypoints(grains, sandPct), [grains, sandPct])
-  const crackWaypoints     = crackWaypointsProp ?? crackWaypointsSelf
-  const crackD             = useMemo(() => smoothPath(crackWaypoints), [crackWaypoints])
+  const ions     = useMemo(() => buildIons(grains), [grains])
+  const lattices = useMemo(() => grains.map(buildLattice), [grains])
+  const [crackD, setCrackD] = useState('')
 
   const canvasRef        = useRef(null)
   const physRef          = useRef(null)
@@ -1315,18 +1643,21 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   const dispForceRef     = useRef(0)
   const stableRef        = useRef(0)
   const p2StartTimeRef      = useRef(null)
+  const p2BreakDispRef      = useRef(0)      // phys.currentDisp captured at first bond break
   const p2ProgressRef       = useRef(0)
   const currentP2ProgressRef = useRef(0)   // always set to the p2Progress actually rendered this frame
-  const b2phaseRef          = useRef('phase1')  // transitions to 'phase2' on first bond break
+  const b2phaseRef          = useRef('phase1')  // transitions to 'phase2' (animating), then 'done'
   const recordingRef     = useRef([])
   const finalSnapRef     = useRef(null)
   const lastP1SnapRef    = useRef(null)
   const scrubTRef        = useRef(scrubT)
   const p2DispScaleRef   = useRef(p2DispScale)
 
-  const selectedParticleIdxRef    = useRef(selectedParticleIdx)
-  const onParticleClickRef        = useRef(onParticleClick)
-  const onForceDataRef            = useRef(onForceData)
+  const showChargeRef             = useRef(showCharge)
+  const darkModeRef               = useRef(darkMode)
+  const onBondCountsRef           = useRef(onBondCounts)
+  const onBreakStartRef           = useRef(onBreakStart)
+  const noDiagRef                 = useRef(noDiag)
   const preloadedRecordingRef     = useRef(preloadedRecording)
 
   useEffect(() => { forceRef.current = force }, [force])
@@ -1336,81 +1667,56 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   useEffect(() => { showFieldRef.current = showField }, [showField])
   useEffect(() => { scrubTRef.current = scrubT }, [scrubT])
   useEffect(() => { p2DispScaleRef.current = p2DispScale }, [p2DispScale])
-  useEffect(() => { selectedParticleIdxRef.current = selectedParticleIdx }, [selectedParticleIdx])
-  useEffect(() => { onParticleClickRef.current = onParticleClick }, [onParticleClick])
-  useEffect(() => { onForceDataRef.current = onForceData }, [onForceData])
+  useEffect(() => { showChargeRef.current = showCharge }, [showCharge])
+  useEffect(() => { darkModeRef.current = darkMode }, [darkMode])
+  useEffect(() => { onBondCountsRef.current = onBondCounts }, [onBondCounts])
+  useEffect(() => { onBreakStartRef.current = onBreakStart }, [onBreakStart])
+  useEffect(() => { noDiagRef.current = noDiag }, [noDiag])
   useEffect(() => { preloadedRecordingRef.current = preloadedRecording }, [preloadedRecording])
 
-  function handleCanvasClick(e) {
-    const canvas = canvasRef.current
-    const phys = physRef.current
-    if (!canvas || !phys) return
-    const rect = canvas.getBoundingClientRect()
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top
-    const dpr = window.devicePixelRatio || 1
-    const W = canvas.clientWidth, H = canvas.clientHeight
-    const scale = Math.min(W / (VW * 0.9), H / VH) * dpr
-    const offsetX = (W * dpr - VW * scale) / 2
-    const offsetY = (H * dpr - VH * scale) / 2
-    const worldX = (cx * dpr - offsetX) / scale
-    const worldY = (cy * dpr - offsetY) / scale
-    // In phase 2, get current p2Progress from the active scrub snapshot or animation
-    let p2Prog = p2ProgressRef.current
-    if (b2phaseRef.current === 'phase2') {
-      const st = scrubTRef.current
-      const rec = recordingRef.current
-      if (st !== null && rec.length > 0) {
-        const snap = rec[Math.round(st * (rec.length - 1))]
-        if (snap?.type === 'p2') p2Prog = snap.p2Progress
-      }
-    }
-
-    const { particles } = phys
-    let nearest = -1, minD = Infinity
-    for (let i = 0; i < particles.length; i++) {
-      const p = particles[i]
-      // Phase 2: use actual drawn xs[i] so clicks match visual particle positions
-      let visx = p.x0
-      if (b2phaseRef.current === 'phase2') {
-        const frac = phys.p2frac[i]
-        if (frac < 2) {
-          const raw = Math.max(0, Math.min(1, (p2Prog - frac) / P2_SNAP_RAMP))
-          visx = p.x0 + phys.p2disp[i] * (1 - Math.pow(1 - raw, 3))
-        }
-      }
-      const d = Math.hypot(visx - worldX, p.y0 - worldY)
-      if (d < minD) { minD = d; nearest = i }
-    }
-    // Only select if click lands within the actual particle circle (+ small margin)
-    const hitRadius = nearest >= 0 ? particles[nearest].r + 4 : 0
-    onParticleClickRef.current?.(nearest >= 0 && minD < hitRadius ? nearest : null)
-  }
 
   useEffect(() => {
-    physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints, p2DispScaleRef.current)
-  }, [ions, grains, lattices, crackWaypoints, p2DispScale])
+    const phys = buildPhysics(ions, grains, lattices, p2DispScaleRef.current, noDiagRef.current, crackWaypointsProp ?? null)
+    physRef.current = phys
+    setCrackD(smoothPath(phys.crackWaypoints))
+  }, [ions, grains, lattices, p2DispScale, noDiag, crackWaypointsProp])
 
   useEffect(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
 
-    function emitParticle(phys) {
-      const si = selectedParticleIdxRef.current
-      if (si === null || !phys?.particles?.[si]) return
-      // In phase 2, compute the same visual x that drawPhase2Scene uses so the ring tracks the particle
-      let visualX = null
-      if (b2phaseRef.current === 'phase2') {
-        const frac = phys.p2frac[si]
-        if (frac < 2) {
-          const raw = Math.max(0, Math.min(1, (currentP2ProgressRef.current - frac) / P2_SNAP_RAMP))
-          visualX = phys.particles[si].x0 + phys.p2disp[si] * (1 - Math.pow(1 - raw, 3))
+    function emitBondCounts(phys) {
+      if (!onBondCountsRef.current || !phys?.bonds) return
+      let siO = 0, caOH = 0, caO = 0
+      const inP2 = b2phaseRef.current === 'phase2'
+      const p2Progress = inP2 ? currentP2ProgressRef.current : -1
+      const { p2frac } = phys
+      let siOH = 0
+      const { particles } = phys
+      for (const b of phys.bonds) {
+        if (b.diagonal || !b.inCrop || b.edgeProtected) continue
+        let severed = b.broken
+        if (!severed && inP2) {
+          const iMoved = p2frac[b.i] < 2 && p2Progress >= p2frac[b.i]
+          const jMoved = p2frac[b.j] < 2 && p2Progress >= p2frac[b.j]
+          if (iMoved !== jMoved) severed = true
+        }
+        if (severed) continue
+        if (b.type === 'ss') siO++
+        else if (b.type === 'cc-near') caOH++
+        else if (b.type === 'cs') {
+          const grainPt = particles[b.i].isGrain ? particles[b.i] : particles[b.j]
+          if (grainPt.type === 'Si') siOH++
+          else caO++
         }
       }
-      drawSelectionRing(canvasRef.current, phys, si, visualX)
-      onForceDataRef.current?.(computeForceData(phys, si))
+      onBondCountsRef.current({ siO, caOH, caO, siOH })
     }
 
+
     if (phase === 'idle') {
-      physRef.current = buildPhysics(ions, grains, lattices, crackWaypoints, p2DispScaleRef.current)
+      const phys0 = buildPhysics(ions, grains, lattices, p2DispScaleRef.current, noDiagRef.current, crackWaypointsProp ?? null)
+      physRef.current = phys0
+      setCrackD(smoothPath(phys0.crackWaypoints))
       stableRef.current = 0
       dispForceRef.current = 0
       p2StartTimeRef.current = null
@@ -1420,8 +1726,8 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       finalSnapRef.current = null
       lastP1SnapRef.current = null
       function idleLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, false, 0, bondRoundRef.current, showFieldRef.current)
-        emitParticle(physRef.current)
+        drawScene(canvasRef.current, physRef.current, 0, physRef.current?.crackWaypoints, ts, false, 1.6, bondRoundRef.current, showFieldRef.current, showChargeRef.current, darkModeRef.current)
+        emitBondCounts(physRef.current)
         rafRef.current = requestAnimationFrame(idleLoop)
       }
       rafRef.current = requestAnimationFrame(idleLoop)
@@ -1445,15 +1751,16 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           applyP1Snapshot(physRef.current, lastP1SnapRef.current)
         }
         prevSt = st
+        // Scrub takes priority over live animation; live plays when not scrubbing.
         if (st !== null && rec.length > 0) {
           const snap = rec[Math.round(st * (rec.length - 1))]
           if (snap.type === 'p2') {
             if (lastP1SnapRef.current) applyP1Snapshot(physRef.current, lastP1SnapRef.current)
             currentP2ProgressRef.current = snap.p2Progress
-            drawPhase2Scene(canvasRef.current, physRef.current, snap.p2Progress, ts, showDiagRef.current, bondRoundRef.current, null, showFieldRef.current, crackWaypoints, false)
+            drawPhase2Scene(canvasRef.current, physRef.current, snap.p2Progress, ts, showDiagRef.current, bondRoundRef.current, null, showFieldRef.current, physRef.current?.crackWaypoints, false, showChargeRef.current, darkModeRef.current)
           } else {
             applyP1Snapshot(physRef.current, snap)
-            drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current, showFieldRef.current)
+            drawScene(canvasRef.current, physRef.current, 0, physRef.current?.crackWaypoints, ts, showDiagRef.current, 1.6, bondRoundRef.current, showFieldRef.current, showChargeRef.current, darkModeRef.current)
           }
         } else if (isP2) {
           const P2_DURATION = 833
@@ -1462,11 +1769,11 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
             : p2ProgressRef.current
           p2ProgressRef.current = p2Progress
           currentP2ProgressRef.current = p2Progress
-          drawPhase2Scene(canvasRef.current, physRef.current, p2Progress, ts, showDiagRef.current, bondRoundRef.current, p2StartTimeRef.current, showFieldRef.current, crackWaypoints)
+          drawPhase2Scene(canvasRef.current, physRef.current, p2Progress, ts, showDiagRef.current, bondRoundRef.current, p2StartTimeRef.current, showFieldRef.current, physRef.current?.crackWaypoints, true, showChargeRef.current, darkModeRef.current)
         } else {
-          drawScene(canvasRef.current, physRef.current, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current, showFieldRef.current)
+          drawScene(canvasRef.current, physRef.current, 0, physRef.current?.crackWaypoints, ts, showDiagRef.current, 1.6, bondRoundRef.current, showFieldRef.current, false, darkModeRef.current)
         }
-        emitParticle(physRef.current)
+        emitBondCounts(physRef.current)
         rafRef.current = requestAnimationFrame(drawLoop)
       }
       rafRef.current = requestAnimationFrame(drawLoop)
@@ -1475,12 +1782,15 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
 
     if (phase !== 'testing') return
 
+    const P2_SNAP_COUNT = 40  // pre-generate snapshots for p2Progress 0 → 1
+
     recordingRef.current = []
     finalSnapRef.current = null
     lastP1SnapRef.current = null
     stableRef.current = 0
     dispForceRef.current = 0
     p2StartTimeRef.current = null
+    p2BreakDispRef.current = 0
     p2ProgressRef.current  = 0
     b2phaseRef.current = 'phase1'
     let frameCount = 0
@@ -1490,33 +1800,47 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       const phys = physRef.current
       if (!phys) return
 
+      // ── Phase 1: ramp force toward target, run physics ───────────────────────
       dispForceRef.current = Math.min(forceRef.current, dispForceRef.current + FORCE_RAMP_RATE * speedRef.current)
       const canBreak = forceRef.current >= FRACTURE_THRESHOLD
       stepPhysics(phys, dispForceRef.current, speedRef.current, canBreak)
 
       const brokenNow = phys.bonds.filter(b => b.broken).length
 
-      // First break → snap into Phase 2, pre-fill p2 frames, trigger macro crack
+      if (frameCount === 0) {
+        const faultBonds = phys.bonds.filter(b => b.isFault)
+        console.log('[MicroPanelB] fault bonds:', faultBonds.length, 'types:', [...new Set(faultBonds.map(b=>b.type))], 'min breakStrain:', Math.min(...faultBonds.map(b=>b.breakStrain)), 'canBreak:', canBreak)
+      }
+      if (frameCount % 30 === 0) {
+        const faultBroken = phys.bonds.filter(b => b.isFault && b.broken).length
+        const maxStrain = phys.bonds.filter(b=>b.isFault && !b.broken).reduce((m,b)=>Math.max(m,Math.abs(b.strain)),0)
+        console.log(`[MicroPanelB] frame=${frameCount} dispForce=${dispForceRef.current.toFixed(3)} currentDisp=${phys.currentDisp.toFixed(2)} faultBroken=${faultBroken} maxFaultStrain=${maxStrain.toFixed(4)} brokenNow=${brokenNow}`)
+      }
+
+      // First break → hand off to drawPhase2Scene in the settled/failed drawLoop
       if (canBreak && b2phaseRef.current === 'phase1' && brokenNow > 0) {
+        const p2Active = phys.p2frac ? phys.p2frac.filter(f => f < 2).length : -1
+        console.log('[MicroPanelB] BREAK FIRED! frame=', frameCount, 'dispForce=', dispForceRef.current.toFixed(3), 'brokenNow=', brokenNow, 'p2Active=', p2Active, 'p2disp[0]=', phys.p2disp?.[0]?.toFixed(4))
         b2phaseRef.current = 'phase2'
         p2StartTimeRef.current = ts
         const snap = snapshotP1(phys, 0, ts)
         recordingRef.current.push(snap)
-        lastP1SnapRef.current = snap
         finalSnapRef.current = snap
-        // Pre-fill 60 Phase 2 frames (p2Progress 0→1)
-        for (let k = 0; k <= 60; k++) recordingRef.current.push({ type: 'p2', p2Progress: k / 60 })
-        const p2Frac = (recordingRef.current.length - 61) / (recordingRef.current.length - 1)
+        lastP1SnapRef.current = snap
+        for (let i = 0; i <= P2_SNAP_COUNT; i++) {
+          recordingRef.current.push({ type: 'p2', p2Progress: i / P2_SNAP_COUNT })
+        }
+        const p2Frac = (recordingRef.current.length - 1 - P2_SNAP_COUNT) / (recordingRef.current.length - 1)
+        onBreakStartRef.current?.()
         onRecordingReady?.(p2Frac)
-        onFailed?.()
+        onFailed?.(Math.round(dispForceRef.current * 2500))
         return
       }
 
-      drawScene(canvasRef.current, phys, 0, crackWaypoints, ts, showDiagRef.current, 0, bondRoundRef.current, showFieldRef.current)
-      emitParticle(phys)
+      drawScene(canvasRef.current, phys, 0, phys.crackWaypoints, ts, showDiagRef.current, 1.6, bondRoundRef.current, showFieldRef.current, showChargeRef.current, darkModeRef.current)
+      emitBondCounts(phys)
       frameCount++
 
-      // Record every other Phase 1 frame
       if (frameCount % 2 === 0) recordingRef.current.push(snapshotP1(phys, 0, ts))
 
       const newBreaks = brokenNow > prevBroken
@@ -1527,10 +1851,17 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       const forceFullyRamped = dispForceRef.current >= forceRef.current - 0.001
       const atTarget = Math.abs(phys.currentDisp - dispForceRef.current * MAX_PUNCH_DISP) < 0.05
       if (frameCount > 30 && stableRef.current >= SETTLE_FRAMES && phys.currentDisp > 0.1 && atTarget && forceFullyRamped) {
+        b2phaseRef.current = 'phase2'
+        p2StartTimeRef.current = ts
         const snap = snapshotP1(phys, 0, ts)
         recordingRef.current.push(snap)
         finalSnapRef.current = snap
-        onRecordingReady?.()
+        lastP1SnapRef.current = snap
+        for (let i = 0; i <= P2_SNAP_COUNT; i++) {
+          recordingRef.current.push({ type: 'p2', p2Progress: i / P2_SNAP_COUNT })
+        }
+        const p2Frac = (recordingRef.current.length - 1 - P2_SNAP_COUNT) / (recordingRef.current.length - 1)
+        onRecordingReady?.(p2Frac)
         onSettled?.()
         return
       }
@@ -1546,21 +1877,17 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
     <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
       <svg
         width="100%" height="100%"
-        viewBox={`${VW * 0.05} 0 ${VW * 0.9} ${VH}`}
-        preserveAspectRatio="xMidYMid meet"
+        viewBox={`0 0 ${VW} ${VH}`}
+        preserveAspectRatio="xMidYMid slice"
         className="panel-svg"
       >
-        <defs>
-          <clipPath id="vb-clip">
-            <rect x={VW * 0.05} y={0} width={VW * 0.9} height={VH} rx={4} />
-          </clipPath>
-        </defs>
-        <g clipPath="url(#vb-clip)">
-          <rect x={VW * 0.05} y={0} width={VW * 0.9} height={VH} fill={C.bg} rx={4} />
+        <g>
+          <rect x={0} y={0} width={VW} height={VH} fill={C.bg} />
           {phase === 'idle' && ions.map((ion, i) => (
             <g key={i}>
               <circle cx={ion.x} cy={ion.y} r={ion.r}
                 fill={ion.type === 'Ca' ? C.Ca : C.O} opacity={1}
+                stroke={darkMode ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.22)'} strokeWidth={0.5}
                 style={jitterStyle(i * 73 + 29)} />
               {ion.type === 'O' && (
                 <circle cx={ion.x + 2.5} cy={ion.y - 2.5} r={1.5}
@@ -1576,6 +1903,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
                 <circle key={ni} cx={node.x} cy={node.y}
                   r={node.type === 'Si' ? 4 : 3}
                   fill={node.type === 'Si' ? C.Si : C.O} opacity={1}
+                  stroke={darkMode ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.22)'} strokeWidth={0.5}
                   style={jitterStyle((gi * 500 + ni) * 137 + 42)} />
               ))}
             </g>
@@ -1583,43 +1911,25 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
         </g>
       </svg>
 
-      <canvas ref={canvasRef} onClick={handleCanvasClick}
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: 'crosshair' }} />
+      <canvas ref={canvasRef}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }} />
 
-      <svg viewBox={`${VW * 0.05} 0 ${VW * 0.9} ${VH}`} preserveAspectRatio="xMidYMid meet"
+      <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="xMidYMid slice"
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
         <defs>
           <linearGradient id="field-grad-b" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%"   stopColor="rgb(172,167,160)" />
-            <stop offset="10%"  stopColor="rgb(255,180,230)" />
-            <stop offset="25%"  stopColor="rgb(255,40,180)" />
-            <stop offset="65%"  stopColor="rgb(160,0,255)" />
-            <stop offset="100%" stopColor="rgb(0,200,255)" />
+            <stop offset="0%"   stopColor="rgb(200,196,188)" />
+            <stop offset="20%"  stopColor="rgb(195,90,255)" />
+            <stop offset="55%"  stopColor="rgb(240,30,225)" />
+            <stop offset="100%" stopColor="rgb(255,70,185)" />
           </linearGradient>
         </defs>
-        <rect x={3} y={3} width={VW - 6} height={VH - 6} fill="none" stroke={accentColor} strokeWidth={6} />
-        {label && (
-          <text x={12} y={18}
+{label && (
+          <text x={(VW-VH)/2 + 10} y={18}
             style={{ fontSize: '10px', fontFamily: 'system-ui,sans-serif', fontWeight: 700, letterSpacing: '0.12em' }}
             fill={accentColor} opacity={0.85}>
             {label.toUpperCase()}
           </text>
-        )}
-        <g transform={`translate(110, ${VH - 20})`}>
-          <rect x={-4} y={-11} width={200} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
-          <LegendDot cx={6}   cy={0} r={4} fill={C.Si} label="Si" />
-          <LegendDot cx={46}  cy={0} r={3} fill={C.O}  label="O (grain)" />
-          <LegendDot cx={115} cy={0} r={4} fill={C.Ca} label="Ca" />
-          <LegendDot cx={162} cy={0} r={3} fill={C.O}  label="OH⁻" showH />
-        </g>
-        {showField && (
-          <g transform={`translate(${VW - 230}, ${VH - 20})`}>
-            <rect x={-4} y={-11} width={126} height={24} fill="white" stroke="#ccc" strokeWidth={0.5} rx={3} />
-            <text x={0} y={1} className="micro-legend">Bond strain:</text>
-            <rect x={78} y={-9} width={48} height={12} fill="url(#field-grad-b)" />
-            <text x={78} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }}>low</text>
-            <text x={126} y={12} style={{ fontSize: '8px', fill: '#888', fontFamily: 'system-ui,sans-serif' }} textAnchor="end">high</text>
-          </g>
         )}
       </svg>
     </div>

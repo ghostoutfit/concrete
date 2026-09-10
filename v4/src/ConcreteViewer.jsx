@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { generateCrack } from './MacroPanel'
-import { MicroPanelB, ForcePanel, buildGrains, buildCrackWaypoints, buildBlueGrains, buildBlueCrackWaypoints, VW, VH, buildPhysics, stepPhysics, snapshotP1, MAX_PUNCH_DISP, buildIons, buildLattice, FRACTURE_THRESHOLD, strainColor, COLOR_STOPS, MATRIX_SPACING } from './MicroPanel'
+import { MicroPanelB, BondIcon, buildGrains, buildBlueGrains, buildBlueCrackWaypoints, VW, VH, buildPhysics, stepPhysics, stepPhysicsP2, snapshotP1, MAX_PUNCH_DISP, buildIons, buildLattice, FRACTURE_THRESHOLD, strainColor, COLOR_STOPS, COLOR_STOPS_LIGHT, MATRIX_SPACING } from './MicroPanel'
 import './ConcreteViewer.css'
 
 const SAND_PRESETS = [0, 20, 40, 60, 80]
@@ -147,12 +147,10 @@ function ScrubSlider({ value, onChange, disabled }) {
   function onMouseDown(e) {
     if (disabled || !trackRef.current) return
     const rect = trackRef.current.getBoundingClientRect()
-    const thumbCx = rect.left + value * rect.width
-    if (Math.abs(e.clientX - thumbCx) <= THUMB_W / 2 + 6) {
-      dragging.current = true
-      document.body.style.cursor = 'grabbing'
-      e.preventDefault()
-    }
+    onChangeCb.current(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)))
+    dragging.current = true
+    document.body.style.cursor = 'grabbing'
+    e.preventDefault()
   }
 
   const pct = `${value * 100}%`
@@ -342,9 +340,9 @@ function PhotoScene({
             const N = photoPts.length - 1
             return [
               ...(strand.fromTop ? [
-                <path key="cap" d={strandToCapD(strand)}
+                <path key={`${si}-cap`} d={strandToCapD(strand)}
                   fill="none" stroke="#1a1008" strokeWidth={0.3 * wm} strokeLinecap="butt" />,
-                <path key="captip" d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none" />,
+                <path key={`${si}-captip`} d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none" />,
               ] : []),
               ...photoPts.slice(0, -1).map(([px0, py0], i) => {
                 const [px1, py1] = photoPts[i + 1]
@@ -385,7 +383,7 @@ function PhotoScene({
         <span style={{ color: 'rgba(60,60,60,0.18)', position: 'absolute', inset: 0, textAlign: 'right', userSelect: 'none' }}>8888</span>
         <span style={{ color: 'rgba(60,60,60,0.72)', display: 'block', textAlign: 'right' }}>{Math.round(lcdKN)}</span>
       </div>
-      {showPhotoCracks && showZoomUI && (
+      {!photoViewIsZooming && showZoomUI && (
         <>
           <div
             ref={photoBoxRef}
@@ -499,182 +497,11 @@ function PhotoScene({
   )
 }
 
-// ── Ultrazoom: tight SVG viewport around crack-center particles ──────────────
-function UltrazoomPanel({ physBase, recording, scrubT: st, crackWaypoints, forceN }) {
-  const offsetsRef = useRef(null)
-  const rafRef     = useRef(null)
-  const [, setTick] = useState(0)
-
-  // Allocate per-bond offsets when physBase arrives
-  useEffect(() => {
-    if (!physBase) return
-    offsetsRef.current = new Float32Array(physBase.particles.length * 2)
-  }, [physBase])
-
-  // Brownian motion loop — mean-reverting random walk
-  useEffect(() => {
-    const step = 0.45, decay = 0.88
-    const loop = () => {
-      const offs = offsetsRef.current
-      if (offs) {
-        for (let i = 0; i < offs.length; i++)
-          offs[i] = offs[i] * decay + (Math.random() - 0.5) * step
-      }
-      setTick(t => t + 1)
-      rafRef.current = requestAnimationFrame(loop)
-    }
-    rafRef.current = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [])
-
-  if (!physBase || !crackWaypoints?.length) {
-    return (
-      <div style={{ flex: 1, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, fontFamily: 'system-ui,sans-serif' }}>
-          {physBase ? 'Crack path not ready' : 'Loading…'}
-        </span>
-      </div>
-    )
-  }
-
-  const { particles, bonds: baseBonds } = physBase
-
-  // Current frame strains from recording; fall back to last p1 frame during phase 2
-  const frame = recording?.length && st != null
-    ? recording[Math.round(st * (recording.length - 1))]
-    : null
-  const dataFrame = frame?.type === 'p1'
-    ? frame
-    : recording?.slice().reverse().find(f => f.type === 'p1') ?? null
-  const bonds = baseBonds.map((b, idx) => ({
-    ...b,
-    origIdx: idx,
-    strain: dataFrame ? (dataFrame.bs?.[idx] ?? 0) : 0,
-    broken: dataFrame ? (dataFrame.bb?.[idx] === 1) : false,
-  }))
-
-  // Crack midpoint in world space
-  const mid = crackWaypoints[Math.floor(crackWaypoints.length / 2)]
-
-  // Viewport: zoom out so bonds and labels have breathing room
-  const R = MATRIX_SPACING * 3.5
-  const vx0 = mid.x - R, vy0 = mid.y - R
-  const vSize = R * 2
-
-  // Particles and bonds inside viewport
-  const visParts = particles
-    .map((p, i) => ({ p, i }))
-    .filter(({ p }) => p.x0 >= vx0 && p.x0 <= vx0 + vSize && p.y0 >= vy0 && p.y0 <= vy0 + vSize)
-  const visIdxSet = new Set(visParts.map(x => x.i))
-  const visBonds = bonds.filter(b => !b.broken && !b.diagonal && visIdxSet.has(b.i) && visIdxSet.has(b.j))
-
-  const atomColor = p => p.type === 'Ca' ? '#706a6a' : p.type === 'Si' ? '#d4a020' : '#cc3a3a'
-  const fontSize = MATRIX_SPACING * 0.256 * 0.7
-
-  return (
-    <div style={{ flex: 1, minHeight: 0, background: '#000', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-      <svg
-        width="100%" height="100%"
-        viewBox={`${vx0} ${vy0} ${vSize} ${vSize}`}
-        preserveAspectRatio="xMidYMid meet"
-        style={{ display: 'block' }}
-      >
-        <defs>
-          <filter id="uz-bond-blur" x="-60%" y="-200%" width="220%" height="500%">
-            <feGaussianBlur stdDeviation="1.1" />
-          </filter>
-        </defs>
-        <rect x={vx0} y={vy0} width={vSize} height={vSize} fill="#000" />
-
-        {/* Bonds: blurred oval glow + integer strain label */}
-        {visBonds.map((b, idx) => {
-          const pi = particles[b.i], pj = particles[b.j]
-          const offs = offsetsRef.current
-          const pix = pi.x0 + (offs ? offs[b.i * 2]     : 0)
-          const piy = pi.y0 + (offs ? offs[b.i * 2 + 1] : 0)
-          const pjx = pj.x0 + (offs ? offs[b.j * 2]     : 0)
-          const pjy = pj.y0 + (offs ? offs[b.j * 2 + 1] : 0)
-          const len = Math.hypot(pjx - pix, pjy - piy)
-          const restLen = Math.hypot(pj.x0 - pi.x0, pj.y0 - pi.y0)
-          const effectiveStrain = b.strain * (len / restLen)
-          const color = strainColor(effectiveStrain, b.breakStrain)
-          const ux = (pjx - pix) / len, uy = (pjy - piy) / len
-          const angleDeg = Math.atan2(pjy - piy, pjx - pix) * 180 / Math.PI
-          // Center on visible bond (between particle surfaces, not centers)
-          const vmx = (pix + pi.r * ux + pjx - pj.r * ux) / 2
-          const vmy = (piy + pi.r * uy + pjy - pj.r * uy) / 2
-          const vlen = len - pi.r - pj.r
-          const strainLabel = String(Math.round(effectiveStrain * 10000))
-          return (
-            <g key={idx}>
-              <ellipse
-                cx={vmx} cy={vmy}
-                rx={vlen / 2} ry={2.8}
-                transform={`rotate(${angleDeg},${vmx},${vmy})`}
-                fill={color} opacity={0.95}
-                filter="url(#uz-bond-blur)"
-              />
-              <text
-                x={vmx} y={vmy}
-                textAnchor="middle" dominantBaseline="central"
-                fontSize={fontSize}
-                fill="rgba(255,255,255,0.90)"
-                style={{ fontFamily: "'Lexend', system-ui, sans-serif", fontWeight: 700 }}
-              >{strainLabel}</text>
-            </g>
-          )
-        })}
-
-        {/* Particles on top */}
-        {visParts.map(({ p, i }) => {
-          const offs = offsetsRef.current
-          const dx = offs ? offs[i * 2]     : 0
-          const dy = offs ? offs[i * 2 + 1] : 0
-          return (
-            <g key={i}>
-              <circle cx={p.x0 + dx} cy={p.y0 + dy} r={p.r} fill={atomColor(p)} opacity={0.9} />
-              {p.type === 'O' && !p.isGrain && (
-                <circle cx={p.x0 + dx + 2.5} cy={p.y0 + dy - 2.5} r={1.5} fill="white" opacity={0.8} />
-              )}
-            </g>
-          )
-        })}
-      </svg>
-
-      {/* Force label overlay */}
-      <div style={{
-        position: 'absolute', bottom: 8, right: 10,
-        color: 'rgba(255,255,255,0.45)', fontSize: 10, fontWeight: 600,
-        fontFamily: 'system-ui,sans-serif', letterSpacing: '0.05em',
-        pointerEvents: 'none',
-      }}>
-        {forceN} N
-      </div>
-
-      {/* Bond strain color key */}
-      <div style={{
-        position: 'absolute', bottom: 8, left: 10,
-        display: 'flex', flexDirection: 'column', gap: 2,
-        pointerEvents: 'none',
-      }}>
-        <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.55)', fontFamily: 'system-ui,sans-serif' }}>Bond strain</span>
-        <div style={{
-          width: 80, height: 8, borderRadius: 2,
-          background: 'linear-gradient(to right, rgb(172,167,160) 0%, rgb(255,180,230) 10%, rgb(255,40,180) 25%, rgb(160,0,255) 65%, rgb(0,200,255) 100%)',
-        }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', width: 80 }}>
-          <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'system-ui,sans-serif' }}>low</span>
-          <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', fontFamily: 'system-ui,sans-serif' }}>high</span>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 export default function ConcreteViewer() {
   const [sandPct, setSandPct] = useState(40)
   const [phase, setPhase]     = useState('idle')
-  const [force, setForce]     = useState(1000 / 2500)
+  const [force, setForce]     = useState(1)
   const [layoutSeed, setLayoutSeed] = useState(() => Math.round(Math.random() * 1e6))
   const [speedIdx, setSpeedIdx]     = useState(2)
   const [controlTab, setControlTab] = useState('ratio')
@@ -682,6 +509,7 @@ export default function ConcreteViewer() {
   const [manualRecording, setManualRecording] = useState(null)  // preloaded recording for manual tab
   const [manualBreakN, setManualBreakN] = useState(null)        // forceN at first fault bond break
   const [manualPhysBase, setManualPhysBase] = useState(null)    // rest-position particles + bond connectivity
+  const [manualP2T, setManualP2T] = useState(0)                 // 0→1 progress of spring-back auto-play
 
   const [bondRound]  = useState(3)
   const [hasRecording, setHasRecording] = useState(false)
@@ -751,19 +579,6 @@ export default function ConcreteViewer() {
     return () => cancelAnimationFrame(lcdRafRef.current)
   }, [phase, speedIdx])
 
-  // Per-sand break threshold: fires handleFailed when LCD crosses the target kN
-  const breakThresholdRef = useRef(null)
-  useEffect(() => { breakThresholdRef.current = null }, [sandPct])
-  useEffect(() => {
-    if (phase !== 'testing') return
-    if (breakThresholdRef.current === null) {
-      const base = SAND_BREAK_KN[sandPct] ?? 650
-      const v = SAND_BREAK_VAR[sandPct] ?? 0.10
-      breakThresholdRef.current = Math.round(base * (1 - v + Math.random() * 2 * v))
-    }
-    if (lcdKN >= breakThresholdRef.current) handleFailed(breakThresholdRef.current)
-  }, [lcdKN, phase, sandPct])
-
   // Overlay image positioning
   const [pusherX,    setPusherX]    = useState(75.3)
   const [pusherY,    setPusherY]    = useState(-13)
@@ -773,16 +588,13 @@ export default function ConcreteViewer() {
   const [barSize,    setBarSize]    = useState(70.4)
 
   const [showField, setShowField] = useState(true)
-  const [selectedParticle, setSelectedParticle] = useState(null)  // { panelId, idx }
-  const [forceData, setForceData] = useState(null)
+  const [showCount, setShowCount] = useState(false)
+  const [chargeVisible, setChargeVisible] = useState(false)
+  const [darkMode, setDarkMode] = useState(true)
+  const [bondCounts, setBondCounts] = useState(null)
+  const [initialBondCounts, setInitialBondCounts] = useState(null)
 
-  function handleParticleClick(panelId, idx) {
-    if (idx === null) { setSelectedParticle(null); setForceData(null) }
-    else setSelectedParticle({ panelId, idx })
-  }
-
-  const [photoView, setPhotoView] = useState('full')
-  const [showZoomUI, setShowZoomUI] = useState(true)
+  const [photoView, setPhotoView] = useState('off')
   const [photoBoxX]    = useState(34.8)
   const [photoBoxY]    = useState(22.0)
   const [photoVShift, setPhotoVShift] = useState(17)
@@ -810,6 +622,13 @@ export default function ConcreteViewer() {
   const photoBoxRef    = useRef(null)
   const zoomLayerRef   = useRef(null)
   const [zoomLayerW,   setZoomLayerW] = useState(800)
+
+  // Apply dark/light mode to body and root element
+  useEffect(() => {
+    document.body.style.background = darkMode ? '#080808' : '#e8e3da'
+    document.body.setAttribute('data-theme', darkMode ? 'dark' : 'light')
+    return () => { document.body.removeAttribute('data-theme') }
+  }, [darkMode])
 
   // Re-attach ResizeObserver whenever photo-zoom-layer mounts/unmounts (photoView changes)
   useEffect(() => {
@@ -885,8 +704,6 @@ export default function ConcreteViewer() {
     () => buildGrains(panelSandPct, layoutSeed * 7919 + panelSandPct * 137 + 42),
     [panelSandPct, layoutSeed]
   )
-  const crackWaypoints = useMemo(() => buildCrackWaypoints(grains, panelSandPct), [grains, panelSandPct])
-
   const blueGrains = useMemo(
     () => buildBlueGrains(panelSandPct, blueLayoutSeed * 7919 + panelSandPct * 137 + 42),
     [panelSandPct, blueLayoutSeed]
@@ -903,7 +720,7 @@ export default function ConcreteViewer() {
 
   // Build manual-tab preload: run physics at each 20N step, snapshot, no live loop needed
   useEffect(() => {
-    if (controlTab !== 'manual' && controlTab !== 'ultrazoom') return
+    if (controlTab !== 'manual') return
     setManualRecording(null)
     setManualBreakN(null)
     if (controlTab === 'manual') setManualForceN(0)
@@ -911,79 +728,95 @@ export default function ConcreteViewer() {
     const g = buildGrains(MANUAL_SAND_PCT, layoutSeed * 7919 + MANUAL_SAND_PCT * 137 + 42)
     const ions = buildIons(g)
     const lattices = g.map(buildLattice)
-    const cw = buildCrackWaypoints(g, MANUAL_SAND_PCT)
-    const phys = buildPhysics(ions, g, lattices, cw, (crackParams[MANUAL_SAND_PCT] ?? crackParams[40]).widthMul * 1.5)
+    const phys = buildPhysics(ions, g, lattices, (crackParams[MANUAL_SAND_PCT] ?? crackParams[40]).widthMul * 1.5)
 
     const recording = []
     let foundBreakN = null
 
     for (let n = 0; n <= MANUAL_MAX_N; n += MANUAL_FORCE_STEP) {
       const f = n / MANUAL_MAX_N
-      // Jump displacement directly to this force level (fast, no ramp needed)
-      const targetDisp = f * MAX_PUNCH_DISP
-      phys.currentDisp = targetDisp
-      const { particles, bonds } = phys
-      for (let i = 0; i < phys.n; i++) {
-        const p = particles[i]
-        p.x = p.x0 + phys.currentDisp * (p.x0 / VW) * Math.max(0, 1.0 - p.y0 / VH)
-      }
+      // Pre-set displacement so stepPhysics doesn't ramp — it runs kinematic + relaxation instantly
+      phys.currentDisp = f * MAX_PUNCH_DISP
       const canBreak = f >= FRACTURE_THRESHOLD
-      for (let b = 0; b < bonds.length; b++) {
-        const bond = bonds[b]
-        if (bond.broken) continue
-        const pi = particles[bond.i], pj = particles[bond.j]
-        const dx = pj.x - pi.x, dy = pj.y - pi.y
-        const d = Math.hypot(dx, dy)
-        if (d < 0.001) continue
-        bond.strain = (d - bond.restLen) / bond.restLen
-        if (canBreak && Math.abs(bond.strain) > bond.breakStrain) bond.broken = true
-      }
+      stepPhysics(phys, f, 1, canBreak)
 
-      if (foundBreakN === null && bonds.some(b => b.broken)) foundBreakN = n
+      if (foundBreakN === null && phys.bonds.some(b => b.broken)) foundBreakN = n
 
       const snap = snapshotP1(phys, 0, 0)
       snap.forceN = n
       recording.push(snap)
+
+      if (foundBreakN !== null) break  // stop at first break; spring-back handles the rest
     }
 
-    // 61 phase-2 frames (p2Progress 0→1)
-    for (let k = 0; k <= 60; k++) recording.push({ type: 'p2', p2Progress: k / 60 })
+    // Spring-back: 61 frames (0→1), boundary rows follow time-based displacement,
+    // interior particles relax from current positions through bond forces.
+    const p2BreakDisp = phys.currentDisp
+    for (let k = 0; k <= 60; k++) {
+      const p2T = k / 60
+      stepPhysicsP2(phys, p2BreakDisp * (1 - p2T))
+      recording.push(snapshotP1(phys, 0, 0))
+    }
+
+    setManualP2T(0)  // reset auto-play on recording rebuild
 
     setManualPhysBase({
       particles: phys.particles.map(p => ({ x0: p.x0, y0: p.y0, r: p.r, type: p.type, isGrain: p.isGrain })),
       bonds: phys.bonds.map(b => ({ i: b.i, j: b.j, type: b.type, diagonal: b.diagonal, isFault: b.isFault, breakStrain: b.breakStrain })),
-      crackWaypoints: cw,
+      crackWaypoints: phys.crackWaypoints,
     })
     setManualRecording(recording)
     setManualBreakN(foundBreakN)
   }, [controlTab, layoutSeed])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const activeHasRecording = activeBox === 'blue' ? blueHasRecording : hasRecording
+  const p2Duration = 833  // ms — matches live Phase 2 P2_DURATION
+
+  // Auto-play spring-back animation when manual force crosses break threshold
+  const manualInP2 = isManual && manualBreakN != null && manualForceN >= manualBreakN
+  useEffect(() => {
+    if (!manualInP2) { setManualP2T(0); return }  // reset when force drops below break
+    if (manualP2T >= 1) return
+    const startTime = performance.now()
+    let raf
+    function tick() {
+      const t = Math.min(1, (performance.now() - startTime) / p2Duration)
+      setManualP2T(t)
+      if (t < 1) raf = requestAnimationFrame(tick)
+      else setScrubT(1)   // hand off to main scrubber when done
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [manualInP2, p2Duration])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const activeHasRecording = activeBox === 'blue' ? blueHasRecording : (hasRecording || (manualInP2 && manualP2T >= 1))
   const activeIsRunning    = activeBox === 'blue'
     ? (bluePhase === 'idle' || bluePhase === 'testing')
     : (phase === 'idle' || phase === 'testing')
-  const isScrubbable = !isManual && photoView === 'off' && hasRecording
+  const isScrubbable = photoView === 'off' && (!isManual ? hasRecording : (manualInP2 && manualP2T >= 1))
 
-  // Manual mode: compute scrubT into the preloaded recording from manualForceN
+  // Manual mode: compute scrubT into the preloaded recording
   const manualScrubT = useMemo(() => {
-    if ((controlTab !== 'manual' && controlTab !== 'ultrazoom') || !manualRecording?.length) return 0
-    const p1Count = manualRecording.filter(s => s.type === 'p1').length
+    if (controlTab !== 'manual' || !manualRecording?.length) return 0
+    // Phase 1 frames have forceN set; spring-back frames don't
+    const p1Count = manualRecording.filter(s => s.forceN != null).length
     const totalFrames = manualRecording.length
+    const p2Count = totalFrames - p1Count
     if (manualBreakN == null || manualForceN < manualBreakN) {
-      // Phase 1: map forceN to p1 frame index
+      // Phase 1: force wiper — button position maps to strained frame
       const idx = Math.min(Math.round(manualForceN / MANUAL_FORCE_STEP), p1Count - 1)
       return idx / (totalFrames - 1)
     } else {
-      // Phase 2: map excess force to p2 progress (61 frames after the p1 frames)
-      const p2Idx = Math.round(Math.min(1, (manualForceN - manualBreakN) / Math.max(1, MANUAL_MAX_N - manualBreakN)) * 60)
+      // Phase 2: time wiper — manualP2T (auto-play) hands off to scrubT (manual scrub) when done
+      const p2T = manualP2T >= 1 ? scrubT : manualP2T
+      const p2Idx = Math.round(p2T * (p2Count - 1))
       const frameIdx = p1Count + p2Idx
       return Math.min(1, frameIdx / (totalFrames - 1))
     }
-  }, [controlTab, manualRecording, manualForceN, manualBreakN])
+  }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T, scrubT])
 
   const scrubElapsed = isManual
-    ? (manualBreakN != null && manualForceN >= manualBreakN
-        ? Math.min(1, (manualForceN - manualBreakN) / Math.max(1, MANUAL_MAX_N - manualBreakN)) * totalCrackMs
+    ? (manualInP2
+        ? (manualP2T >= 1 ? scrubT : manualP2T) * totalCrackMs
         : 0)
     : (isScrubbable
         ? (p2StartFrac != null
@@ -1002,11 +835,10 @@ export default function ConcreteViewer() {
   }, [macroCrackStrands, currentCrackParams.depth])
 
   function clearRecording() { setHasRecording(false); setScrubT(1) }
-  function startTest()  { breakFiredRef.current = false; breakThresholdRef.current = null; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setSelectedParticle(null); setForceData(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)) }
-  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null) }
+  function startTest()  { breakFiredRef.current = false; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(bondCounts) }
+  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setInitialBondCounts(null) }
   function handleReplay() {
     breakFiredRef.current = false
-    breakThresholdRef.current = null
     setLcdKN(0)
     clearRecording()
     setBlueHasRecording(false)
@@ -1017,14 +849,14 @@ export default function ConcreteViewer() {
   }
 
   function handleSandPct(pct) {
-    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null)
+    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null)
   }
 
   function handleRecordingReady(p2Frac) { setHasRecording(true); if (p2Frac != null) setP2StartFrac(p2Frac) }
   function handleFailed(kn)  {
     if (breakFiredRef.current) return
     breakFiredRef.current = true
-    setPhase('failed'); setBreakKN(kn ?? null); if (kn != null) setLcdKN(kn)
+    setPhase('failed'); setBreakKN(kn ?? null)
   }
   function handleSettled() { setPhase('settled') }
 
@@ -1211,9 +1043,17 @@ export default function ConcreteViewer() {
           <div className="panel-bolt" style={{ top: 9, right: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
-          {/* Scrub slider — sits between the bottom bolts */}
-          <div style={{ position: 'absolute', bottom: 2, left: 43, right: 43, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
-            <ScrubSlider value={scrubT} onChange={setScrubT} disabled={!activeHasRecording} />
+          {/* Scrub slider + replay — sits between the bottom bolts */}
+          <div style={{ position: 'absolute', bottom: 2, left: 43, right: 70, display: 'flex', alignItems: 'center', gap: 50 }}>
+            <div style={{ flex: 1, minWidth: 0, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
+              <ScrubSlider value={scrubT} onChange={setScrubT} disabled={!activeHasRecording} />
+            </div>
+            <button
+              className="action-btn test-btn"
+              onClick={() => setScrubT(0)}
+              disabled={!activeHasRecording}
+              style={{ flexShrink: 0 }}
+            >↺ Replay</button>
           </div>
           {/* Tab strip */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginBottom: 5 }}>
@@ -1225,56 +1065,78 @@ export default function ConcreteViewer() {
               className={`tab-btn ${controlTab === 'manual' ? 'active' : ''}`}
               onClick={() => { setControlTab('manual'); setManualForceN(0); if (photoView !== 'off') cancelZoom() }}
             >Manual Force Values</button>
-            <button
-              className={`tab-btn ${controlTab === 'ultrazoom' ? 'active' : ''}`}
-              onClick={() => { setControlTab('ultrazoom'); if (photoView !== 'off') cancelZoom() }}
-            >Ultrazoom</button>
           </div>
 
           {controlTab === 'ratio' ? (
-            <>
-              {/* Heading row */}
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', paddingBottom: 4 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
-                <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
-              </div>
-              {/* Row 1: sand presets + Test/ZoomOut */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                {SAND_PRESETS.map(pct => (
-                  <button key={pct}
-                    className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
-                    onClick={() => handleSandPct(pct)}
-                  >
-                    <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
-                  </button>
-                ))}
-                <div className="toolbar-divider" />
-                {photoView === 'off' ? (
-                  <>
-                    <button className="action-btn replay-btn" onClick={zoomOut}>Zoom Out</button>
-                    <button className="action-btn replay-btn" onClick={() => setShowField(f => !f)}>
-                      {showField ? 'Hide Field' : 'Show Field'}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+              {/* Sand preset group — heading centered only on presets */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+                  <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  {SAND_PRESETS.map(pct => (
+                    <button key={pct}
+                      className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
+                      onClick={() => handleSandPct(pct)}
+                    >
+                      <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
                     </button>
-                    <button className="action-btn test-btn"
-                      onClick={startTest} disabled={phase === 'testing'}>Test</button>
-                  </>
-                ) : (
-                  <>
-                    <button className="action-btn test-btn"
-                      onClick={startTest} disabled={phase === 'testing'}>Test</button>
-                    <label className="zoom-checkbox-label">
-                      <input
-                        type="checkbox"
-                        className="zoom-checkbox"
-                        checked={showZoomUI}
-                        onChange={e => setShowZoomUI(e.target.checked)}
-                      />
-                      <span>Zoom</span>
-                    </label>
-                  </>
-                )}
+                  ))}
+                </div>
               </div>
-            </>
+              <div className="toolbar-divider" />
+              {phase === 'failed' || phase === 'settled'
+                ? <button className="action-btn test-btn" onClick={() => handleSandPct(sandPct)}>Reset</button>
+                : <button className="action-btn test-btn" onClick={startTest} disabled={phase === 'testing'}>Test</button>
+              }
+              <div className="toolbar-divider" />
+              {photoView === 'off' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.45)' }}>Show/Hide Visuals</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
+                    <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
+                    <button className={`action-btn replay-btn${showField ? ' active' : ''}`} onClick={() => setShowField(f => !f)}>Field</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <button className="action-btn" style={{ background: 'rgba(200,40,40,0.25)', borderColor: 'rgba(200,60,60,0.6)', color: '#ff8888' }} onClick={() => handleBoxClick('red')}>Crack Start</button>
+                  <button className="action-btn" style={{ background: 'rgba(20,20,20,0.4)', borderColor: 'rgba(80,80,80,0.6)', color: '#bbb' }} onClick={() => handleBoxClick('grey')}>Crack End</button>
+                  <button className="action-btn" style={{ background: 'rgba(40,80,200,0.25)', borderColor: 'rgba(60,120,220,0.6)', color: '#88aaff' }} onClick={() => handleBoxClick('blue')}>Compress</button>
+                </div>
+              )}
+              <div className="toolbar-divider" />
+              {/* Right: theme toggle + speed slider */}
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4 }}>
+                <button
+                  className={`action-btn replay-btn${!darkMode ? ' active' : ''}`}
+                  onClick={() => setDarkMode(f => !f)}
+                  title="Toggle light/dark mode"
+                  style={{
+                    fontSize: 18,
+                    padding: '3px 9px 4px',
+                    lineHeight: 1,
+                    textShadow: darkMode
+                      ? '0 0 8px rgba(180,210,255,0.95), 0 0 18px rgba(120,170,255,0.6)'
+                      : '0 0 8px rgba(255,220,50,0.95), 0 0 18px rgba(255,160,0,0.65)',
+                  }}
+                >{darkMode ? '☽' : '☀'}</button>
+                <div className="toolbar-divider" />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                  <span style={{ fontSize: 8, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.45)' }}>Speed</span>
+                  <input
+                    type="range" min={0} max={SPEEDS.length - 1} step={1}
+                    value={speedIdx}
+                    onChange={e => setSpeedIdx(Number(e.target.value))}
+                    style={{ width: 72, accentColor: '#5a90d0' }}
+                  />
+                  <span style={{ fontSize: 8, letterSpacing: '0.06em', color: 'rgba(200,215,230,0.55)', fontVariantNumeric: 'tabular-nums' }}>{SPEEDS[speedIdx]}×</span>
+                </div>
+              </div>
+            </div>
           ) : !manualRecording ? (
             <div style={{ color: 'rgba(200,215,230,0.55)', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textAlign: 'center' }}>
               Loading…
@@ -1284,7 +1146,7 @@ export default function ConcreteViewer() {
               <button
                 className="action-btn replay-btn"
                 onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
-                disabled={manualForceN === 0}
+                disabled={manualForceN === 0 || manualInP2}
               >− 20 N</button>
               <div style={{
                 color: '#e4ddd0', fontSize: 18, fontWeight: 700, minWidth: 90,
@@ -1296,6 +1158,7 @@ export default function ConcreteViewer() {
               <button
                 className="action-btn test-btn"
                 onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + MANUAL_FORCE_STEP))}
+                disabled={manualForceN >= MANUAL_MAX_N || manualInP2}
               >+ 20 N</button>
             </div>
           )}
@@ -1332,7 +1195,7 @@ export default function ConcreteViewer() {
               showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
               photoViewIsZooming={photoView === 'zooming'}
               photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
-              showZoomUI={showZoomUI}
+              showZoomUI={true}
               borderPx={2}
               effectivePhotoScale={1}
               effectiveBoxBgAlpha={0}
@@ -1360,54 +1223,168 @@ export default function ConcreteViewer() {
       <main className="micro-section">
         {photoView === 'off' && (
           <div className="force-viz-space">
-            <ForcePanel data={forceData} />
-          </div>
-        )}
-
-        {/* Ultrazoom view */}
-        {controlTab === 'ultrazoom' && (
-          <div className="micro-square" style={{ borderTop: '2px solid rgba(100,180,255,0.4)' }}>
-            <UltrazoomPanel
-              physBase={manualPhysBase}
-              recording={manualRecording}
-              scrubT={manualScrubT}
-              crackWaypoints={manualPhysBase?.crackWaypoints}
-              forceN={manualForceN}
-            />
+            {/* Particle key */}
+            <div style={{ display: 'flex', justifyContent: 'space-around', flexShrink: 0, padding: '0 6px' }}>
+              {[
+                { particles: [{ x: 0, y: 0, r: 4,   type: 'Si' }],                       label: <><b>Si</b> <sup>δ+</sup></> },
+                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: true }],        label: <><b>O</b> <sup>δ−</sup></>  },
+                { particles: [{ x: 0, y: 0, r: 5.5, type: 'Ca' }],                       label: <><b>Ca</b> <sup>2+</sup></>  },
+                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: false }],       label: <><b>OH</b><sup>−</sup></>    },
+              ].map(({ particles, label }, i) => (
+                <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                  <BondIcon particles={particles} bonds={[]} scale={1.5} darkMode={darkMode} showCharge={chargeVisible} />
+                  <span style={{ fontSize: 11, color: darkMode ? '#999' : '#666', fontFamily: 'system-ui,sans-serif' }}>{label}</span>
+                </div>
+              ))}
+            </div>
+            {/* Bond strain key */}
+            {showField && (
+              <svg viewBox="0 0 200 60" width="100%" style={{ display: 'block', flexShrink: 0 }}>
+                <defs>
+                  <linearGradient id="cv-strain-grad" x1="0" x2="1" y1="0" y2="0">
+                    {darkMode ? (<>
+                      <stop offset="0%"   stopColor="rgb(200,196,188)" />
+                      <stop offset="20%"  stopColor="rgb(195,90,255)" />
+                      <stop offset="55%"  stopColor="rgb(240,30,225)" />
+                      <stop offset="100%" stopColor="rgb(255,70,185)" />
+                    </>) : (<>
+                      <stop offset="0%"   stopColor="rgb(172,167,160)" />
+                      <stop offset="20%"  stopColor="rgb(190,100,220)" />
+                      <stop offset="55%"  stopColor="rgb(150,20,200)" />
+                      <stop offset="100%" stopColor="rgb(255,40,160)" />
+                    </>)}
+                  </linearGradient>
+                </defs>
+                <text x="0" y="16" style={{ fontSize: '16px', fill: darkMode ? '#999' : '#666', fontFamily: 'system-ui,sans-serif' }}>Energy in fields:</text>
+                <rect x="0" y="20" width="200" height="12" fill="url(#cv-strain-grad)" rx="1" />
+                <text x="0"   y="54" style={{ fontSize: '18px', fill: darkMode ? '#666' : '#888', fontFamily: 'system-ui,sans-serif' }}>Low</text>
+                <text x="200" y="54" style={{ fontSize: '18px', fill: darkMode ? '#666' : '#888', fontFamily: 'system-ui,sans-serif', textAnchor: 'end' }}>High</text>
+              </svg>
+            )}
+            {showCount && <div className="bond-analysis-box">
+              {bondCounts && (() => {
+                const tested = initialBondCounts !== null
+                const rows = [
+                  {
+                    key: 'sand', label: 'Sand', color: '#c8961e',
+                    getValue: c => c.siO,
+                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.0} particles={[
+                      { x: 0, y: 0, r: 4, type: 'Si' },
+                      { x: 16, y: 0, r: 3, type: 'O', isGrain: true },
+                    ]} bonds={[{ i: 0, j: 1 }]} />,
+                  },
+                  {
+                    key: 'sandCement', label: 'Sand-Cement', color: '#9c6828',
+                    getValue: c => c.caO + c.siOH,
+                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.0} particles={[
+                      { x: 0, y: 0,  r: 5.5, type: 'Ca' },
+                      { x: 16, y: 0,  r: 3,   type: 'O', isGrain: true },
+                      { x: 0, y: 14, r: 4,   type: 'Si' },
+                      { x: 16, y: 14, r: 3,   type: 'O', isGrain: false },
+                    ]} bonds={[{ i: 0, j: 1 }, { i: 2, j: 3 }]} />,
+                  },
+                  {
+                    key: 'concrete', label: 'Cement', color: '#9a9292',
+                    getValue: c => c.caOH,
+                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.0} particles={[
+                      { x: 0,  y: 0, r: 5.5, type: 'Ca' },
+                      { x: 16, y: 0, r: 3,   type: 'O', isGrain: false },
+                    ]} bonds={[{ i: 0, j: 1 }]} />,
+                  },
+                ]
+                const colData = rows.map(({ key, label, color, getValue, icon }) => {
+                  const now    = getValue(bondCounts)
+                  const before = getValue(initialBondCounts ?? bondCounts)
+                  const broken = Math.max(0, before - now)
+                  return { key, label, color, icon, now, before, broken }
+                })
+                const totalBroken = colData.reduce((s, d) => s + d.broken, 0)
+                const valueRows = [
+                  { key: 'before', label: 'Before', getCell: d => ({ val: d.before, bold: false }) },
+                  { key: 'now',    label: 'Now',    getCell: d => ({ val: tested ? d.now : null, bold: false }) },
+                  { key: 'broken', label: 'Broken', getCell: d => ({
+                    val: tested ? d.broken : null,
+                    pct: tested && d.before > 0 ? (d.broken / d.before * 100).toFixed(1) : null,
+                    bold: true,
+                  }) },
+                  { key: 'total', label: 'Total', getCell: d => ({
+                    pct: tested && totalBroken > 0 ? (d.broken / totalBroken * 100).toFixed(1) : null,
+                    bold: false,
+                  }) },
+                ]
+                return (
+                  <div style={{ padding: '6px 4px', display: 'flex', flexDirection: 'column', gap: 0, height: '100%', boxSizing: 'border-box' }}>
+                    {/* Column headers — bond type icons + labels */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'end', marginBottom: 4 }}>
+                      <span />
+                      {colData.map(({ key, label, color, icon }) => (
+                        <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          {icon}
+                          <span style={{ fontSize: 8, color, letterSpacing: '0.04em', lineHeight: 1, textAlign: 'center' }}>{label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Value rows */}
+                    {valueRows.map(({ key, label, getCell }) => (
+                      <div key={key} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
+                        <span style={{ fontSize: 8, letterSpacing: '0.07em', color: darkMode ? '#666' : '#888', textTransform: 'uppercase' }}>{label}</span>
+                        {colData.map(d => {
+                          const { val, pct, bold } = getCell(d)
+                          return (
+                            <div key={d.key} style={{ textAlign: 'center' }}>
+                              {val != null && (
+                                <span style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500 }}>
+                                  {val}
+                                </span>
+                              )}
+                              {val == null && pct == null && (
+                                <span style={{ fontSize: 16, color: darkMode ? '#333' : '#bbb' }}>—</span>
+                              )}
+                              {pct != null && (
+                                <div style={{ fontSize: 10, color: d.color, opacity: 0.85, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{pct}%</div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>}
           </div>
         )}
 
         {/* Red view */}
-        <div ref={microSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(255,80,80,0.5)', display: (photoView === 'off' && activeBox !== 'red') || controlTab === 'ultrazoom' ? 'none' : undefined }}>
+        <div ref={microSquareRef} className="micro-square" style={{ border: '2px solid rgba(255,80,80,0.6)', display: photoView === 'off' && activeBox !== 'red' ? 'none' : undefined }}>
           <div style={simWrapperStyle}>
             <MicroPanelB
               sandPct={panelSandPct}
               phase={isManual ? (manualRecording ? 'failed' : 'idle') : (phase === 'failed' && !hasRecording ? 'testing' : phase)}
               layoutSeed={layoutSeed}
-              force={panelForce} speed={speed} bondRound={bondRound}
-              crackWaypoints={crackWaypoints}
+              force={panelForce} speed={speed} bondRound={bondRound} noDiag
               onSettled={isManual ? () => {} : handleSettled}
               onFailed={isManual ? () => {} : handleFailed}
               scrubT={isManual ? manualScrubT : (photoView === 'off' && hasRecording ? scrubT : null)}
               onRecordingReady={isManual ? () => {} : handleRecordingReady}
               p2DispScale={redP2DispScale}
               showField={isManual ? true : showField}
+              showCharge={chargeVisible}
+              darkMode={darkMode}
               preloadedRecording={isManual ? manualRecording : null}
-              selectedParticleIdx={selectedParticle?.panelId === 'red' ? selectedParticle.idx : null}
-              onParticleClick={(idx) => handleParticleClick('red', idx)}
-              onForceData={setForceData}
+              onBondCounts={setBondCounts}
             />
           </div>
         </div>
 
         {/* Blue view — big grain stops crack */}
-        <div ref={blueSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(80,140,255,0.5)', display: (photoView === 'off' && activeBox !== 'blue') || controlTab === 'ultrazoom' ? 'none' : undefined }}>
+        <div ref={blueSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(80,140,255,0.5)', display: photoView === 'off' && activeBox !== 'blue' ? 'none' : undefined }}>
           <div style={blueWrapperStyle}>
             <MicroPanelB
               sandPct={panelSandPct}
               phase={isManual ? 'idle' : bluePhase}
               layoutSeed={blueLayoutSeed}
-              force={isManual ? 0 : panelForce} speed={speed} bondRound={bondRound}
+              force={isManual ? 0 : panelForce} speed={speed} bondRound={bondRound} noDiag
               grainOverride={blueGrains}
               crackWaypoints={blueCrackWaypoints}
               accentColor="#3d6fd4"
@@ -1416,27 +1393,25 @@ export default function ConcreteViewer() {
               scrubT={isManual ? null : (photoView === 'off' && blueHasRecording ? scrubT : null)}
               onRecordingReady={isManual ? () => {} : () => setBlueHasRecording(true)}
               showField={showField}
-              selectedParticleIdx={selectedParticle?.panelId === 'blue' ? selectedParticle.idx : null}
-              onParticleClick={(idx) => handleParticleClick('blue', idx)}
-              onForceData={setForceData}
+              showCharge={chargeVisible}
+              darkMode={darkMode}
             />
           </div>
         </div>
 
         {/* Grey view — static cross-section under pusher, always idle, never breaks */}
-        <div className="micro-square" style={{ borderTop: '2px solid rgba(10,10,10,0.9)', display: photoView === 'off' && activeBox === 'grey' && controlTab !== 'ultrazoom' ? undefined : 'none' }}>
+        <div className="micro-square" style={{ borderTop: '2px solid rgba(10,10,10,0.9)', display: photoView === 'off' && activeBox === 'grey' ? undefined : 'none' }}>
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             <MicroPanelB
               sandPct={panelSandPct} phase="idle" layoutSeed={greyLayoutSeed}
-              force={0} speed={1} bondRound={bondRound}
+              force={0} speed={1} bondRound={bondRound} noDiag
               accentColor="#111111"
               onSettled={() => {}} onFailed={() => {}}
               scrubT={null}
               onRecordingReady={() => {}}
               showField={showField}
-              selectedParticleIdx={selectedParticle?.panelId === 'grey' ? selectedParticle.idx : null}
-              onParticleClick={(idx) => handleParticleClick('grey', idx)}
-              onForceData={setForceData}
+              showCharge={chargeVisible}
+              darkMode={darkMode}
             />
           </div>
         </div>
@@ -1560,7 +1535,7 @@ export default function ConcreteViewer() {
                 showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
                 photoViewIsZooming={photoView === 'zooming'}
                 photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
-              showZoomUI={showZoomUI}
+              showZoomUI={false}
                 borderPx={borderPx}
                 effectivePhotoScale={effectivePhotoScale}
                 effectiveBoxBgAlpha={effectiveBoxBgAlpha}
@@ -1575,6 +1550,13 @@ export default function ConcreteViewer() {
                 }}
               />
             </div>
+            {photoView === 'full' && (
+              <button
+                className="action-btn test-btn"
+                style={{ position: 'absolute', bottom: 14, right: 14, fontSize: 10, padding: '4px 12px', zIndex: 20 }}
+                onClick={() => handleBoxClick('red')}
+              >Zoom</button>
+            )}
           </div>
         )}
       </main>

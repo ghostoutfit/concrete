@@ -9,7 +9,7 @@ html, body, #root {
 }
 
 body {
-  background: #1a1a1a;
+  background: #080808;
   color: #e8e4df;
   font-family: system-ui, sans-serif;
 }
@@ -91,7 +91,7 @@ body {
 /* ── sand preset buttons — machined steel on panel ── */
 .preset-btn {
   position: relative;
-  padding: 6px 13px 7px;
+  padding: 4px 8px 5px;
   border-radius: 3px;
   cursor: pointer;
   text-align: center;
@@ -278,6 +278,21 @@ body {
     0 0 16px rgba(40,100,200,0.18);
 }
 
+.replay-btn.active {
+  background: linear-gradient(165deg, #0c1624 0%, #091020 50%, #060c1a 100%);
+  border-color: #5a90d0;
+  color: #90c8f0;
+  text-shadow: 0 0 8px rgba(100,180,255,0.50), 0 1px 0 rgba(0,20,60,0.60);
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 6px rgba(0,0,0,0.70),
+    inset 0 1px 0 rgba(0,0,0,0.30),
+    0 0 0 1px #060810,
+    0 1px 0 #060810,
+    0 2px 4px rgba(0,0,0,0.50),
+    0 0 14px rgba(60,140,240,0.40);
+}
+
 /* ── control tabs ── */
 .tab-btn {
   padding: 4px 11px 5px;
@@ -417,8 +432,6 @@ body {
 .force-slider {
   writing-mode: vertical-lr;
   direction: rtl;
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
   width: 20px;
   height: 56px;
   cursor: pointer;
@@ -461,28 +474,38 @@ body {
   flex-direction: row;
   align-items: stretch;
   overflow: hidden;
-  background: #1e1e1e;
+  background: #080808;
   position: relative;   /* photo-stage positions against this */
 }
 
 .force-viz-space {
-  flex: 0 0 auto;
-  width: calc(max(0px, 100vw - 85vh) / 2);
-  min-width: 0;
+  flex: none;
+  width: 220px;
   display: flex;
   flex-direction: column;
   padding: 16px;
   box-sizing: border-box;
+  gap: 12px;
+}
+
+.bond-analysis-box {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid #1a1a1a;
+  border-radius: 4px;
+  background: #0c0c0c;
 }
 
 .micro-square {
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
   height: 100%;
+  aspect-ratio: 12 / 7;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   position: relative;
   overflow: hidden;
+  margin-left: auto;
 }
 
 .micro-square > .panel-title {
@@ -694,6 +717,34 @@ body {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation: draw-crack 0.52s ease-in-out forwards;
+}
+
+/* ── light mode overrides ── */
+body[data-theme='light'] {
+  background: #e8e3da;
+  color: #2a2620;
+}
+
+body[data-theme='light'] .micro-section {
+  background: #ede8df;
+}
+
+body[data-theme='light'] .force-viz-space {
+  background: transparent;
+}
+
+body[data-theme='light'] .bond-analysis-box {
+  background: #ddd8cf;
+  border-color: #ccc7be;
+}
+
+body[data-theme='light'] .scrub-bar {
+  background: #ccc7be;
+  border-bottom-color: #bcb7ae;
+}
+
+body[data-theme='light'] .panel-title {
+  color: #888;
 }
 
 /* ── particle thermal jitter ── */
