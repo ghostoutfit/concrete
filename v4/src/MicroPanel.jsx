@@ -852,8 +852,8 @@ function particleCharge(p) {
   if (p.type === 'Si') return 0.5
   return p.isGrain ? -0.5 : -1
 }
-const CHARGE_POS = '231,131,42'  // warm orange — positive (δ+, 2+)
-const CHARGE_NEG = '62,127,214'  // cool blue  — negative (δ−, −)
+const CHARGE_POS = '62,127,214'   // cool blue  — positive (δ+, 2+)
+const CHARGE_NEG = '231,131,42'   // warm orange — negative (δ−, −)
 
 // Alpha ramp: full at rest-length ≤ 110% of MATRIX_SPACING, fades to 0 by 170%
 function bondDistAlpha(restLen) {
