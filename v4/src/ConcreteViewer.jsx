@@ -1332,16 +1332,11 @@ export default function ConcreteViewer() {
                           const { val, pct, bold } = getCell(d)
                           return (
                             <div key={d.key} style={{ textAlign: 'center' }}>
-                              {val != null && (
-                                <span style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500 }}>
-                                  {val}
-                                </span>
-                              )}
-                              {val == null && pct == null && (
-                                <span style={{ fontSize: 16, color: darkMode ? '#333' : '#bbb' }}>—</span>
-                              )}
                               {pct != null && (
-                                <div style={{ fontSize: 10, color: d.color, opacity: 0.85, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{pct}%</div>
+                                <div style={{ fontSize: 12, color: d.color, opacity: 0.85, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, fontWeight: bold ? 700 : 500 }}>{pct}%</div>
+                              )}
+                              {pct == null && (
+                                <span style={{ fontSize: 12, color: darkMode ? '#333' : '#bbb' }}>—</span>
                               )}
                             </div>
                           )
