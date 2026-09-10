@@ -304,22 +304,22 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(200,215,230,0.45);
+  color: rgba(30,45,60,0.70);
   cursor: pointer;
   outline: none;
   transition: color 0.1s, background 0.1s, border-color 0.1s;
 }
 
 .tab-btn:hover {
-  color: rgba(200,215,230,0.75);
-  background: rgba(255,255,255,0.06);
+  color: rgba(20,35,55,0.90);
+  background: rgba(0,0,0,0.06);
 }
 
 .tab-btn.active {
-  color: #c8dcea;
-  background: rgba(255,255,255,0.10);
-  border-color: rgba(160,200,230,0.25);
-  text-shadow: 0 0 10px rgba(140,200,255,0.3);
+  color: rgba(10,25,50,1.0);
+  background: rgba(0,0,0,0.10);
+  border-color: rgba(40,80,130,0.30);
+  text-shadow: none;
 }
 
 /* ── zoom checkbox ── */
@@ -380,7 +380,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  overflow: hidden;
   position: relative;
   background: #f5f0e8;
 }

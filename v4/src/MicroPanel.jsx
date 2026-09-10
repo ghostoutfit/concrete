@@ -48,27 +48,21 @@ const DIAG_BOND  = MATRIX_SPACING * Math.SQRT2 * 1.1 // ~24.9 px
 const GRAIN_BOND = H_STEP + 4                      // 36 px  (max intra-grain)
 const IFACE_BOND = MATRIX_SPACING * 1.7            // ~27 px
 
-// Continuous strain colour: near-bg → navy → amber → red.
+// Continuous strain colour: near-bg → violet → magenta → hot pink.
 // Stops are front-loaded so bonds ramp to strong colour at small strain fractions.
+// Alpha is adjusted per theme (see globalAlpha calls in drawScene/drawPhase2Scene).
 export const COLOR_STOPS = [
-  [0.00, 200, 196, 188],  // light warm grey — visible on dark bg
+  [0.00, 200, 196, 188],  // warm grey — zero strain
   [0.20, 195,  90, 255],  // bright violet
   [0.55, 240,  30, 225],  // vivid magenta-purple
   [1.00, 255,  70, 185],  // hot pink — at break
 ]
-export const COLOR_STOPS_LIGHT = [
-  [0.00, 172, 167, 160],  // warm grey
-  [0.20, 190, 100, 220],  // light purple
-  [0.55, 150,  20, 200],  // deep purple
-  [1.00, 255,  40, 160],  // hot pink
-]
 
-export function strainColor(strain, breakStrain, dark = true) {
-  const stops = dark ? COLOR_STOPS : COLOR_STOPS_LIGHT
+export function strainColor(strain, breakStrain) {
   const t = Math.min(1, Math.abs(strain) / (breakStrain * 0.45))
-  for (let k = 0; k < stops.length - 1; k++) {
-    const [t0, r0, g0, b0] = stops[k]
-    const [t1, r1, g1, b1] = stops[k + 1]
+  for (let k = 0; k < COLOR_STOPS.length - 1; k++) {
+    const [t0, r0, g0, b0] = COLOR_STOPS[k]
+    const [t1, r1, g1, b1] = COLOR_STOPS[k + 1]
     if (t <= t1) {
       const u = (t - t0) / (t1 - t0)
       return `rgb(${Math.round(r0+(r1-r0)*u)},${Math.round(g0+(g1-g0)*u)},${Math.round(b0+(b1-b0)*u)})`
@@ -83,8 +77,8 @@ export function strainColor(strain, breakStrain, dark = true) {
 // fault activates under any load — even a small force strains fault
 // bonds visibly while bulk bonds stay near-zero.
 const FAULT_CORRIDOR    = 18    // px half-width of weak zone
-const FAULT_K_FACTOR    = 0.30  // fault bonds 70% softer → stretch more per unit load
-const FAULT_BREAK_FACTOR = 0.20  // fault bonds break at 20% of normal strain — low enough to crack ~65% deep with kinematic field
+const FAULT_K_FACTOR         = 0.30  // fault bonds 70% softer → stretch more per unit load
+export const FAULT_BREAK_FACTOR = 0.20  // fault bonds break at 20% of normal strain — low enough to crack ~65% deep with kinematic field
 
 function distToSegment(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay
@@ -591,7 +585,7 @@ export function buildPhase2Disps(particles, crackWaypoints, p2DispScale = 1) {
 }
 
 // ── Physics engine ─────────────────────────────────────────────
-export function buildPhysics(ions, grains, lattices, p2DispScale = 1, noDiag = false, crackWaypointsOverride = null) {
+export function buildPhysics(ions, grains, lattices, p2DispScale = 1, noDiag = false, crackWaypointsOverride = null, faultBreakFactor = FAULT_BREAK_FACTOR) {
   // Build particle list: matrix ions first, then grain atoms
   const particles = []
 
@@ -675,7 +669,7 @@ export function buildPhysics(ions, grains, lattices, p2DispScale = 1, noDiag = f
     const midBy = (pi.y0 + pj.y0) / 2
     if (distToPath(midBx, midBy, crackWaypoints) < FAULT_CORRIDOR) {
       b.k           = BOND_K[b.type]    * FAULT_K_FACTOR
-      b.breakStrain = BOND_BREAK[b.type] * FAULT_BREAK_FACTOR
+      b.breakStrain = BOND_BREAK[b.type] * faultBreakFactor
       b.isFault = true
     }
   }
@@ -973,8 +967,8 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
       const pi = particles[bond.i], pj = particles[bond.j]
       const da = bondCurDistAlpha(pj.x - pi.x, pj.y - pi.y)
       if (da <= 0) continue
-      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha * da
-      lctx.fillStyle = strainColor(bond.strain, bond.breakStrain, darkMode)
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.80) * bond.fieldAlpha * da
+      lctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
       fillLens(lctx, vx(pi), vy(pi), vx(pj), vy(pj), bondRound)
       lctx.fill()
     }
@@ -1021,22 +1015,23 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
     }
   }
 
-  // ── Bond strain labels (×1000, computed live from actual positions) ──
-  ctx.font = '3.5px system-ui'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  for (let b = 0; b < bonds.length; b++) {
-    const bond = bonds[b]
-    if (bond.broken) continue
-    if (!showDiag && bond.diagonal) continue
-    const pi = particles[bond.i], pj = particles[bond.j]
-    const mx = (vx(pi) + vx(pj)) / 2
-    const my = (vy(pi) + vy(pj)) / 2
-    const actualDist = Math.hypot(pj.x - pi.x, pj.y - pi.y)
-    const strain = (actualDist - bond.restLen) / bond.restLen
-    const label = String(Math.round(Math.abs(strain) * 1000))
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'
-    ctx.fillText(label, mx, my)
+  // ── Bond strain labels (×1000, dev mode only) ──
+  if (showDiag) {
+    ctx.font = '3.5px system-ui'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (let b = 0; b < bonds.length; b++) {
+      const bond = bonds[b]
+      if (bond.broken) continue
+      const pi = particles[bond.i], pj = particles[bond.j]
+      const mx = (vx(pi) + vx(pj)) / 2
+      const my = (vy(pi) + vy(pj)) / 2
+      const actualDist = Math.hypot(pj.x - pi.x, pj.y - pi.y)
+      const strain = (actualDist - bond.restLen) / bond.restLen
+      const label = String(Math.round(Math.abs(strain) * 1000))
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'
+      ctx.fillText(label, mx, my)
+    }
   }
 
   // ── Progressive crack path (draws top→bottom as fault bonds break) ──
@@ -1151,18 +1146,18 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
         const stretch = Math.max(0, curLen - bond.restLen) / bond.restLen
         const alpha = Math.max(0, 1 - stretch * 2) * da
         if (alpha > 0) {
-          lctx.globalAlpha = alpha * (darkMode ? 0.85 : 0.65)
-          lctx.fillStyle = strainColor(bond.strain, bond.breakStrain, darkMode)
+          lctx.globalAlpha = alpha * (darkMode ? 0.85 : 0.80)
+          lctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
           fillLens(lctx, ax, ay, bx, by, bondRound)
           lctx.fill()
         }
         continue
       }
       if (bond.fieldAlpha <= 0 || da <= 0) continue
-      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha * da
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.80) * bond.fieldAlpha * da
       const actualLen = Math.hypot(bx - ax, by - ay)
       const actualStrain = (actualLen - bond.restLen) / bond.restLen
-      lctx.fillStyle = strainColor(actualStrain, bond.breakStrain, darkMode)
+      lctx.fillStyle = strainColor(actualStrain, bond.breakStrain)
       fillLens(lctx, ax, ay, bx, by, bondRound)
       lctx.fill()
     }
@@ -1331,8 +1326,8 @@ export function BondIcon({ particles, bonds, scale = 1.5, darkMode = true, showC
     lctx.setTransform(s, 0, 0, s, tx, ty)
     for (const bond of bonds) {
       const pa = particles[bond.i], pb = particles[bond.j]
-      lctx.globalAlpha = darkMode ? 0.82 : 0.60
-      lctx.fillStyle = strainColor(0, 1, darkMode)
+      lctx.globalAlpha = darkMode ? 0.82 : 0.80
+      lctx.fillStyle = strainColor(0, 1)
       fillLens(lctx, pa.x, pa.y, pb.x, pb.y, 1.6)
       lctx.fill()
     }
@@ -1667,7 +1662,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 }
 
 // ── View B: Phase 1 (bonds stress, atoms at rest) → Phase 2 (bonds break, atoms displace) ──
-export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, noDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, onBreakStart, scrubT = null, onRecordingReady, p2DispScale = 1, showField = true, showCharge = false, onBondCounts, preloadedRecording = null, darkMode = true }) {
+export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, noDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, onBreakStart, onForceUpdate, scrubT = null, onRecordingReady, p2DispScale = 1, showField = true, showCharge = false, onBondCounts, preloadedRecording = null, darkMode = true, faultBreakFactor = FAULT_BREAK_FACTOR }) {
   const grains   = useMemo(
     () => grainOverride ?? buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42),
     [sandPct, layoutSeed, grainOverride]
@@ -1695,12 +1690,14 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   const finalSnapRef     = useRef(null)
   const lastP1SnapRef    = useRef(null)
   const scrubTRef        = useRef(scrubT)
-  const p2DispScaleRef   = useRef(p2DispScale)
+  const p2DispScaleRef      = useRef(p2DispScale)
+  const faultBreakFactorRef = useRef(faultBreakFactor)
 
   const showChargeRef             = useRef(showCharge)
   const darkModeRef               = useRef(darkMode)
   const onBondCountsRef           = useRef(onBondCounts)
   const onBreakStartRef           = useRef(onBreakStart)
+  const onForceUpdateRef          = useRef(onForceUpdate)
   const noDiagRef                 = useRef(noDiag)
   const preloadedRecordingRef     = useRef(preloadedRecording)
 
@@ -1711,16 +1708,18 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   useEffect(() => { showFieldRef.current = showField }, [showField])
   useEffect(() => { scrubTRef.current = scrubT }, [scrubT])
   useEffect(() => { p2DispScaleRef.current = p2DispScale }, [p2DispScale])
+  useEffect(() => { faultBreakFactorRef.current = faultBreakFactor }, [faultBreakFactor])
   useEffect(() => { showChargeRef.current = showCharge }, [showCharge])
   useEffect(() => { darkModeRef.current = darkMode }, [darkMode])
   useEffect(() => { onBondCountsRef.current = onBondCounts }, [onBondCounts])
   useEffect(() => { onBreakStartRef.current = onBreakStart }, [onBreakStart])
+  useEffect(() => { onForceUpdateRef.current = onForceUpdate }, [onForceUpdate])
   useEffect(() => { noDiagRef.current = noDiag }, [noDiag])
   useEffect(() => { preloadedRecordingRef.current = preloadedRecording }, [preloadedRecording])
 
 
   useEffect(() => {
-    const phys = buildPhysics(ions, grains, lattices, p2DispScaleRef.current, noDiagRef.current, crackWaypointsProp ?? null)
+    const phys = buildPhysics(ions, grains, lattices, p2DispScaleRef.current, noDiagRef.current, crackWaypointsProp ?? null, faultBreakFactorRef.current)
     physRef.current = phys
     setCrackD(smoothPath(phys.crackWaypoints))
   }, [ions, grains, lattices, p2DispScale, noDiag, crackWaypointsProp])
@@ -1758,7 +1757,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
 
 
     if (phase === 'idle') {
-      const phys0 = buildPhysics(ions, grains, lattices, p2DispScaleRef.current, noDiagRef.current, crackWaypointsProp ?? null)
+      const phys0 = buildPhysics(ions, grains, lattices, p2DispScaleRef.current, noDiagRef.current, crackWaypointsProp ?? null, faultBreakFactorRef.current)
       physRef.current = phys0
       setCrackD(smoothPath(phys0.crackWaypoints))
       stableRef.current = 0
@@ -1848,6 +1847,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
 
       // ── Phase 1: ramp force toward target, run physics ───────────────────────
       dispForceRef.current = Math.min(forceRef.current, dispForceRef.current + FORCE_RAMP_RATE * speedRef.current)
+      onForceUpdateRef.current?.(dispForceRef.current)
       const canBreak = forceRef.current >= FRACTURE_THRESHOLD
       stepPhysics(phys, dispForceRef.current, speedRef.current, canBreak)
 

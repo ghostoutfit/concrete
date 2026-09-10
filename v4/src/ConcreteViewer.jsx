@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { generateCrack } from './MacroPanel'
-import { MicroPanelB, BondIcon, buildGrains, buildBlueGrains, buildBlueCrackWaypoints, VW, VH, buildPhysics, stepPhysics, snapshotP1, MAX_PUNCH_DISP, buildIons, buildLattice, FRACTURE_THRESHOLD, strainColor, COLOR_STOPS, COLOR_STOPS_LIGHT, MATRIX_SPACING } from './MicroPanel'
+import { MicroPanelB, BondIcon, buildGrains, buildBlueGrains, buildBlueCrackWaypoints, VW, VH, buildPhysics, stepPhysics, snapshotP1, MAX_PUNCH_DISP, buildIons, buildLattice, FRACTURE_THRESHOLD, FAULT_BREAK_FACTOR, strainColor, COLOR_STOPS, MATRIX_SPACING } from './MicroPanel'
 import './ConcreteViewer.css'
 
 const SAND_PRESETS = [0, 20, 40, 60, 80]
@@ -8,8 +8,21 @@ const SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 const MANUAL_SAND_PCT = 40
 const MANUAL_FORCE_STEP = 20
 const MANUAL_MAX_N = 600   // 30 steps of 20N; break at ~40% happens around 240-360N in practice
-const SAND_BREAK_KN  = { 0: 100, 20: 400, 40: 650, 60: 500, 80: 200 }
-const SAND_BREAK_VAR = { 0: 0.10, 20: 0.10, 40: 0.10, 60: 0.10, 80: 0.20 }
+// Mean break strength (kN) and coefficient of variation per sand ratio.
+// Source: Amix Systems (2026); see README for details.
+const SAND_BREAK_KN  = { 0: 600, 20: 650, 40: 750, 60: 1000, 80: 400 }
+const SAND_BREAK_VAR = { 0: 0.40, 20: 0.20, 40: 0.10,  60: 0.10, 80: 0.10 }
+// Per-mix fault bond break factor — scales how much strain fault bonds tolerate before snapping.
+// Higher value → panel needs more applied force → longer ramp, more bending before failure.
+// Baseline FAULT_BREAK_FACTOR (0.20) gives ~63% of max force at break.
+const SAND_FAULT_BREAK = { 0: 0.200, 20: 0.217, 40: 0.250, 60: 0.333, 80: 0.133 }
+// Nominal internal breakKN at baseline fault factor (0.20 → ~63% of 2500).
+const NOMINAL_BREAK_KN = 1575
+
+function seededRandom(seed) {
+  const x = Math.sin(seed * 9301 + 49297) * 233280
+  return x - Math.floor(x)
+}
 
 const PHASE1_RATIO    = 1.1
 const PHASE1_STEPS    = 34
@@ -263,7 +276,7 @@ function PhotoScene({
   photoBoxX, boxW, boxH,
   crackScale,
   scrubElapsed,
-  pusherX, pusherY,
+  pusherX, pusherY, pusherNudgePct = 0,
   pusherSize,
   lcdX, lcdY, lcdKN, containerW, lcdNudge = { dx: 0, dy: 0 },
   showPhotoCracks, showBlueCrack, photoViewIsZooming,
@@ -364,7 +377,7 @@ function PhotoScene({
       <img src="/concrete/Pusher.png" draggable={false} style={{
         position: 'absolute',
         left: `${pusherX}%`,
-        top: `${pusherY}%`,
+        top: `${pusherY + pusherNudgePct}%`,
         width: `${pusherSize}%`,
         height: 'auto',
         transform: 'translateX(-50%)',
@@ -519,7 +532,7 @@ export default function ConcreteViewer() {
   const [showDevSliders, setShowDevSliders] = useState(false)
   const [zoomScrubT,  setZoomScrubT]  = useState(0)
   const [breakKN, setBreakKN] = useState(null)
-  const [lcdKN, setLcdKN] = useState(0)
+  const [liveDispForce, setLiveDispForce] = useState(0)
   const [lcdX, setLcdX] = useState(73.8)
   const [lcdY, setLcdY] = useState(13)
   const [capLength, setCapLength] = useState(10.5)
@@ -561,23 +574,6 @@ export default function ConcreteViewer() {
     return () => cancelAnimationFrame(bendRafRef.current)
   }, [phase])
 
-  // LCD force ramp — mirrors MicroPanel's internal FORCE_RAMP_RATE (0.004/frame at 60fps)
-  useEffect(() => {
-    cancelAnimationFrame(lcdRafRef.current)
-    if (phase === 'testing') {
-      const kNPerMs = 0.004 * 60 * SPEEDS[speedIdx] * 2500 / 1000
-      let last = null
-      function tick(ts) {
-        if (last === null) last = ts
-        const dt = ts - last
-        last = ts
-        setLcdKN(prev => Math.min(2500, prev + kNPerMs * dt))
-        lcdRafRef.current = requestAnimationFrame(tick)
-      }
-      lcdRafRef.current = requestAnimationFrame(tick)
-    }
-    return () => cancelAnimationFrame(lcdRafRef.current)
-  }, [phase, speedIdx])
 
   // Overlay image positioning
   const [pusherX,    setPusherX]    = useState(75.3)
@@ -622,6 +618,8 @@ export default function ConcreteViewer() {
   const photoBoxRef    = useRef(null)
   const zoomLayerRef   = useRef(null)
   const [zoomLayerW,   setZoomLayerW] = useState(800)
+  const miniPhotoRef   = useRef(null)
+  const [miniPhotoW,   setMiniPhotoW] = useState(308)
 
   // Apply dark/light mode to body and root element
   useEffect(() => {
@@ -638,11 +636,18 @@ export default function ConcreteViewer() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [photoView])
+
+  useEffect(() => {
+    const el = miniPhotoRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setMiniPhotoW(e.contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const zoomTimerRef   = useRef(null)
   const p2TimerRef     = useRef(null)
   const replayRef      = useRef(false)
   const blueReplayRef  = useRef(false)
-  const lcdRafRef      = useRef(null)
   const replayRafRef   = useRef(null)
   const breakFiredRef  = useRef(false)
 
@@ -672,7 +677,7 @@ export default function ConcreteViewer() {
   useEffect(() => {
     let buf = ''
     const handler = e => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      if (e.target.tagName === 'TEXTAREA' || (e.target.tagName === 'INPUT' && e.target.type !== 'range')) return
       buf = (buf + e.key.toLowerCase()).slice(-3)
       if (buf === 'dev') { setShowDevSliders(d => !d); buf = '' }
     }
@@ -844,11 +849,11 @@ export default function ConcreteViewer() {
     }
     replayRafRef.current = requestAnimationFrame(tick)
   }
-  function startTest()  { breakFiredRef.current = false; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(bondCounts) }
-  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setInitialBondCounts(null) }
+  function startTest()  { breakFiredRef.current = false; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(bondCounts) }
+  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setInitialBondCounts(null) }
   function handleReplay() {
     breakFiredRef.current = false
-    setLcdKN(0)
+    setLiveDispForce(0)
     clearRecording()
     setBlueHasRecording(false)
     blueReplayRef.current = true
@@ -858,8 +863,10 @@ export default function ConcreteViewer() {
   }
 
   function handleSandPct(pct) {
-    clearRecording(); setSandPct(pct); setPhase('idle'); setLcdKN(0); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null); setManualRecording(null); setManualForceN(0); setManualBreakN(null); setManualP2T(0)
+    clearRecording(); setSandPct(pct); setPhase('idle'); setLiveDispForce(0); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null); setManualRecording(null); setManualForceN(0); setManualBreakN(null); setManualP2T(0)
   }
+
+  const handleForceUpdate = useCallback((f) => setLiveDispForce(f), [])
 
   function handleRecordingReady(p2Frac) { setHasRecording(true); if (p2Frac != null) setP2StartFrac(p2Frac) }
   function handleFailed(kn)  {
@@ -1025,6 +1032,21 @@ export default function ConcreteViewer() {
     return scrubT / p2StartFrac * breakKN
   })()
 
+  // Variability lives in the physics: per-layout faultBreakFactor scales actual break force.
+  // kNScale is a fixed unit conversion (mean_kN / nominal_internal_break), no randomness.
+  const effectiveFaultBreakFactor = useMemo(() => {
+    const base = SAND_FAULT_BREAK[sandPct] ?? FAULT_BREAK_FACTOR
+    const cv   = SAND_BREAK_VAR[sandPct]  ?? 0.10
+    const r    = seededRandom(layoutSeed)
+    return base * (1 + (r * 2 - 1) * cv)
+  }, [sandPct, layoutSeed])
+
+  const kNScale = useMemo(() => {
+    const mean        = SAND_BREAK_KN[sandPct] ?? 600
+    const nominalBreak = NOMINAL_BREAK_KN * (SAND_FAULT_BREAK[sandPct] ?? FAULT_BREAK_FACTOR) / FAULT_BREAK_FACTOR
+    return mean / nominalBreak
+  }, [sandPct])
+
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
   const tPusher      = Math.max(0, Math.min(1, (pusherX - barX) / Math.max(barSize, 0.1)))
@@ -1072,13 +1094,13 @@ export default function ConcreteViewer() {
               onClick={() => startReplay(0.25)}
               disabled={!activeHasRecording}
               style={{ flexShrink: 0, transform: 'translateX(-30px)' }}
-            >🐢↺</button>
+            ><img src="/concrete/Turtle.png" draggable={false} style={{ height: '1.5em', verticalAlign: 'middle', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '2em', color: '#90c8f0', lineHeight: 1, verticalAlign: 'middle' }}>↺</span></button>
             <button
               className="action-btn test-btn"
               onClick={() => startReplay(1)}
               disabled={!activeHasRecording}
               style={{ flexShrink: 0, transform: 'translateX(-20px)' }}
-            >🐇↺</button>
+            ><img src="/concrete/Rabbit.png" draggable={false} style={{ height: '1.5em', verticalAlign: 'middle', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '2em', color: '#90c8f0', lineHeight: 1, verticalAlign: 'middle' }}>↺</span></button>
           </div>
           {/* Tab strip */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginBottom: 5 }}>
@@ -1119,12 +1141,12 @@ export default function ConcreteViewer() {
               <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 14, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
                 <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
                 <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(scrubDisplayKN ?? lcdKN)}</span>
+                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)}</span>
               </div>
               <div className="toolbar-divider" />
               {photoView === 'off' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.45)' }}>Show/Hide Visuals</span>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)' }}>Show/Hide Visuals</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                     <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
                     <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
@@ -1133,9 +1155,7 @@ export default function ConcreteViewer() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <button className="action-btn" style={{ background: 'rgba(200,40,40,0.25)', borderColor: 'rgba(200,60,60,0.6)', color: '#ff8888' }} onClick={() => handleBoxClick('red')}>Crack Start</button>
-                  <button className="action-btn" style={{ background: 'rgba(20,20,20,0.4)', borderColor: 'rgba(80,80,80,0.6)', color: '#bbb' }} onClick={() => handleBoxClick('grey')}>Crack End</button>
-                  <button className="action-btn" style={{ background: 'rgba(40,80,200,0.25)', borderColor: 'rgba(60,120,220,0.6)', color: '#88aaff' }} onClick={() => handleBoxClick('blue')}>Compress</button>
+                  <button className="action-btn" style={{ background: 'rgba(200,40,40,0.25)', borderColor: 'rgba(200,60,60,0.6)', color: '#ff8888' }} onClick={() => handleBoxClick('red')}>Zoom to Crack Start</button>
                 </div>
               )}
               <div className="toolbar-divider" />
@@ -1198,7 +1218,7 @@ export default function ConcreteViewer() {
               <div className="toolbar-divider" />
               {/* Show/Hide Visuals */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.45)' }}>Show/Hide Visuals</span>
+                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)' }}>Show/Hide Visuals</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
                   <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
@@ -1221,13 +1241,15 @@ export default function ConcreteViewer() {
         {/* Live mini photo preview — always in sync with main photo */}
         <div className="beam-photo">
           <div
+            ref={miniPhotoRef}
             style={{
               position: 'relative',
               width: '100%',
+              flexShrink: 0,
               overflow: 'hidden',
               aspectRatio: `3000 / ${PZL_IMG_H * (1 - cropFrac)}`,
               cursor: photoView === 'off' ? 'zoom-out' : 'default',
-              transform: `translateY(${pusherDropPct}%) scale(1.1)`,
+              transform: `scale(1.1)`,
               transformOrigin: 'top center',
             }}
             onClick={() => { if (photoView === 'off') zoomOut() }}
@@ -1241,9 +1263,9 @@ export default function ConcreteViewer() {
               boxW={boxW} boxH={boxH}
               crackScale={THUMB_CRACK_SCALE}
               scrubElapsed={scrubElapsed}
-              pusherX={pusherX} pusherY={pusherY + pusherDropPct}
+              pusherX={pusherX} pusherY={pusherY + pusherDropPct} pusherNudgePct={-0.5}
               pusherSize={pusherSize}
-              lcdX={lcdX} lcdY={lcdY} lcdKN={scrubDisplayKN ?? lcdKN} containerW={308} lcdNudge={{ dx: 0, dy: 5 }}
+              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)} containerW={miniPhotoW}
               showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
               photoViewIsZooming={photoView === 'zooming'}
               photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
@@ -1422,6 +1444,8 @@ export default function ConcreteViewer() {
               phase={isManual ? (manualRecording ? 'failed' : 'idle') : (phase === 'failed' && !hasRecording ? 'testing' : phase)}
               layoutSeed={layoutSeed}
               force={panelForce} speed={speed} bondRound={bondRound} noDiag showDiag={showDevSliders}
+              faultBreakFactor={effectiveFaultBreakFactor}
+              onForceUpdate={isManual ? undefined : handleForceUpdate}
               onSettled={isManual ? () => {} : handleSettled}
               onFailed={isManual ? () => {} : handleFailed}
               scrubT={isManual ? manualScrubT : (photoView === 'off' && hasRecording ? scrubT : null)}
@@ -1444,6 +1468,7 @@ export default function ConcreteViewer() {
               phase={isManual ? 'idle' : bluePhase}
               layoutSeed={blueLayoutSeed}
               force={isManual ? 0 : panelForce} speed={speed} bondRound={bondRound} noDiag showDiag={showDevSliders}
+              faultBreakFactor={effectiveFaultBreakFactor}
               grainOverride={blueGrains}
               crackWaypoints={blueCrackWaypoints}
               accentColor="#3d6fd4"
@@ -1574,8 +1599,8 @@ export default function ConcreteViewer() {
                 // translate keeps zoom target at viewport centre: as scale grows, the offset
                 // from photo-centre to zoom-target is amplified, so we counter it exactly.
                 transform: effectivePhotoScale === 1
-                  ? `translateY(${pusherDropPct}%)`
-                  : `translateY(${pusherDropPct}%) translate(${-effectivePhotoScale * (zoomOriginX - 50)}%, ${-effectivePhotoScale * (zoomOriginY - 50)}%) scale(${effectivePhotoScale})`,
+                  ? undefined
+                  : `translate(${-effectivePhotoScale * (zoomOriginX - 50)}%, ${-effectivePhotoScale * (zoomOriginY - 50)}%) scale(${effectivePhotoScale})`,
                 imageRendering: effectivePhotoScale > 5 ? 'pixelated' : 'auto',
               }}
             >
@@ -1590,7 +1615,7 @@ export default function ConcreteViewer() {
                 scrubElapsed={scrubElapsed}
                 pusherX={pusherX} pusherY={pusherY + pusherDropPct}
                 pusherSize={pusherSize}
-                lcdX={lcdX} lcdY={lcdY} lcdKN={scrubDisplayKN ?? lcdKN} containerW={zoomLayerW}
+                lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)} containerW={zoomLayerW}
                 showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
                 photoViewIsZooming={photoView === 'zooming'}
                 photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
@@ -1609,13 +1634,6 @@ export default function ConcreteViewer() {
                 }}
               />
             </div>
-            {photoView === 'full' && (
-              <button
-                className="action-btn test-btn"
-                style={{ position: 'absolute', bottom: 14, right: 14, fontSize: 10, padding: '4px 12px', zIndex: 20 }}
-                onClick={() => handleBoxClick('red')}
-              >Zoom</button>
-            )}
           </div>
         )}
       </main>
