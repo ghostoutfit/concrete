@@ -1042,7 +1042,7 @@ export default function ConcreteViewer() {
           <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
           {/* Scrub slider + replay — sits between the bottom bolts; hidden in manual mode */}
-          <div style={{ position: 'absolute', bottom: 2, left: 43, right: 70, display: isManual ? 'none' : 'flex', alignItems: 'center', gap: 50 }}>
+          <div style={{ position: 'absolute', bottom: 2, left: 50, right: 70, display: isManual ? 'none' : 'flex', alignItems: 'center', gap: 50 }}>
             <div style={{ flex: 1, minWidth: 0, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
               <ScrubSlider value={scrubT} onChange={setScrubT} disabled={!activeHasRecording} />
             </div>
