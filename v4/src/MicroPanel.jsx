@@ -862,7 +862,17 @@ function bondDistAlpha(restLen) {
   if (restLen <= lo) return 1
   if (restLen >= hi) return 0
   const t = (restLen - lo) / (hi - lo)
-  return Math.pow(1 - t, 3)   // cubic: near-zero by √2 spacing (~t=0.52)
+  return Math.pow(1 - t, 3)
+}
+
+// Alpha ramp based on CURRENT distance: full below 150%, fades to 0 at 250%
+function bondCurDistAlpha(dx, dy) {
+  const d = Math.hypot(dx, dy)
+  const lo = MATRIX_SPACING * 1.5
+  const hi = MATRIX_SPACING * 2.5
+  if (d <= lo) return 1
+  if (d >= hi) return 0
+  return 1 - (d - lo) / (hi - lo)
 }
 
 // Reusable offscreen canvas for field blur batching (one blur composite per frame)
@@ -929,8 +939,10 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
       if (bond.broken) continue
       if (!showDiag && bond.diagonal) continue
       if (bond.fieldAlpha <= 0) continue
-      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha
       const pi = particles[bond.i], pj = particles[bond.j]
+      const da = bondCurDistAlpha(pj.x - pi.x, pj.y - pi.y)
+      if (da <= 0) continue
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha * da
       lctx.fillStyle = strainColor(bond.strain, bond.breakStrain, darkMode)
       fillLens(lctx, vx(pi), vy(pi), vx(pj), vy(pj), bondRound)
       lctx.fill()
@@ -1101,11 +1113,12 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
       // iShifted: right-block particle that has snapped (xs moved rightward from x0)
       const iShifted = xs[bond.i] > particles[bond.i].x0 + 0.01
       const jShifted = xs[bond.j] > particles[bond.j].x0 + 0.01
+      const da = bondCurDistAlpha(bx - ax, by - ay)
       if (iShifted !== jShifted) {
         // Bond spans the crack — fade out as particles separate
         const curLen = Math.hypot(bx - ax, by - ay)
         const stretch = Math.max(0, curLen - bond.restLen) / bond.restLen
-        const alpha = Math.max(0, 1 - stretch * 2)
+        const alpha = Math.max(0, 1 - stretch * 2) * da
         if (alpha > 0) {
           lctx.globalAlpha = alpha * (darkMode ? 0.85 : 0.65)
           lctx.fillStyle = strainColor(bond.strain, bond.breakStrain, darkMode)
@@ -1114,8 +1127,8 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
         }
         continue
       }
-      if (bond.fieldAlpha <= 0) continue
-      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha
+      if (bond.fieldAlpha <= 0 || da <= 0) continue
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.60) * bond.fieldAlpha * da
       const actualLen = Math.hypot(bx - ax, by - ay)
       const actualStrain = (actualLen - bond.restLen) / bond.restLen
       lctx.fillStyle = strainColor(actualStrain, bond.breakStrain, darkMode)
