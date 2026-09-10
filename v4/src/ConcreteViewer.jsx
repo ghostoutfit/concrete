@@ -506,6 +506,7 @@ export default function ConcreteViewer() {
   const [speedIdx, setSpeedIdx]     = useState(2)
   const [controlTab, setControlTab] = useState('ratio')
   const [manualForceN, setManualForceN] = useState(0)
+  const [manualSandPct, setManualSandPct] = useState(MANUAL_SAND_PCT)
   const [manualRecording, setManualRecording] = useState(null)  // preloaded recording for manual tab
   const [manualBreakN, setManualBreakN] = useState(null)        // forceN at first fault bond break
   const [manualPhysBase, setManualPhysBase] = useState(null)    // rest-position particles + bond connectivity
@@ -697,7 +698,7 @@ export default function ConcreteViewer() {
 
 
   const isManual = controlTab === 'manual'
-  const panelSandPct = isManual ? MANUAL_SAND_PCT : sandPct
+  const panelSandPct = isManual ? manualSandPct : sandPct
   const manualNormForce = manualForceN / MANUAL_MAX_N
 
   const grains = useMemo(
@@ -725,10 +726,10 @@ export default function ConcreteViewer() {
     setManualBreakN(null)
     if (controlTab === 'manual') setManualForceN(0)
 
-    const g = buildGrains(MANUAL_SAND_PCT, layoutSeed * 7919 + MANUAL_SAND_PCT * 137 + 42)
+    const g = buildGrains(manualSandPct, layoutSeed * 7919 + manualSandPct * 137 + 42)
     const ions = buildIons(g)
     const lattices = g.map(buildLattice)
-    const phys = buildPhysics(ions, g, lattices, (crackParams[MANUAL_SAND_PCT] ?? crackParams[40]).widthMul * 1.5)
+    const phys = buildPhysics(ions, g, lattices, (crackParams[manualSandPct] ?? crackParams[40]).widthMul * 1.5)
 
     const recording = []
     let foundBreakN = null
@@ -767,7 +768,7 @@ export default function ConcreteViewer() {
     })
     setManualRecording(recording)
     setManualBreakN(foundBreakN)
-  }, [controlTab, layoutSeed])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [controlTab, layoutSeed, manualSandPct])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const p2Duration = 833  // ms — matches live Phase 2 P2_DURATION
 
@@ -806,18 +807,15 @@ export default function ConcreteViewer() {
       const idx = Math.min(Math.round(manualForceN / MANUAL_FORCE_STEP), p1Count - 1)
       return idx / (totalFrames - 1)
     } else {
-      // Phase 2: time wiper — manualP2T (auto-play) hands off to scrubT (manual scrub) when done
-      const p2T = manualP2T >= 1 ? scrubT : manualP2T
-      const p2Idx = Math.round(p2T * (p2Count - 1))
+      // Phase 2: auto-play drives the frame; manualP2T stays at 1 when done
+      const p2Idx = Math.round(manualP2T * (p2Count - 1))
       const frameIdx = p1Count + p2Idx
       return Math.min(1, frameIdx / (totalFrames - 1))
     }
-  }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T, scrubT])
+  }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T])
 
   const scrubElapsed = isManual
-    ? (manualInP2
-        ? (manualP2T >= 1 ? scrubT : manualP2T) * totalCrackMs
-        : 0)
+    ? (manualInP2 ? manualP2T * totalCrackMs : 0)
     : (isScrubbable
         ? (p2StartFrac != null
             ? Math.max(0, Math.min(1, (scrubT - p2StartFrac) / (1 - p2StartFrac))) * totalCrackMs
@@ -1043,8 +1041,8 @@ export default function ConcreteViewer() {
           <div className="panel-bolt" style={{ top: 9, right: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
-          {/* Scrub slider + replay — sits between the bottom bolts */}
-          <div style={{ position: 'absolute', bottom: 2, left: 43, right: 70, display: 'flex', alignItems: 'center', gap: 50 }}>
+          {/* Scrub slider + replay — sits between the bottom bolts; hidden in manual mode */}
+          <div style={{ position: 'absolute', bottom: 2, left: 43, right: 70, display: isManual ? 'none' : 'flex', alignItems: 'center', gap: 50 }}>
             <div style={{ flex: 1, minWidth: 0, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
               <ScrubSlider value={scrubT} onChange={setScrubT} disabled={!activeHasRecording} />
             </div>
@@ -1142,24 +1140,62 @@ export default function ConcreteViewer() {
               Loading…
             </div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-              <button
-                className="action-btn replay-btn"
-                onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
-                disabled={manualForceN === 0 || manualInP2}
-              >− 20 N</button>
-              <div style={{
-                color: '#e4ddd0', fontSize: 18, fontWeight: 700, minWidth: 90,
-                textAlign: 'center', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em',
-                textShadow: '0 1px 3px rgba(0,0,0,0.6)',
-              }}>
-                {manualForceN} N
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+              {/* Sand:Cement presets */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+                  <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  {SAND_PRESETS.map(pct => (
+                    <button key={pct}
+                      className={`preset-btn ${manualSandPct === pct ? 'active' : ''}`}
+                      onClick={() => setManualSandPct(pct)}
+                    >
+                      <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
+              <div className="toolbar-divider" />
+              {/* Force buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  className="action-btn replay-btn"
+                  onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
+                  disabled={manualForceN === 0 || manualInP2}
+                >− 20 N</button>
+                <div style={{
+                  color: '#e4ddd0', fontSize: 18, fontWeight: 700, minWidth: 90,
+                  textAlign: 'center', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em',
+                  textShadow: '0 1px 3px rgba(0,0,0,0.6)',
+                }}>
+                  {manualForceN} N
+                </div>
+                <button
+                  className="action-btn test-btn"
+                  onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + MANUAL_FORCE_STEP))}
+                  disabled={manualInP2}
+                >+ 20 N</button>
+              </div>
+              <div className="toolbar-divider" />
+              {/* Show/Hide Visuals */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(200,215,230,0.45)' }}>Show/Hide Visuals</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
+                  <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
+                  <button className={`action-btn replay-btn${showField ? ' active' : ''}`} onClick={() => setShowField(f => !f)}>Field</button>
+                </div>
+              </div>
+              <div className="toolbar-divider" />
+              {/* Theme toggle */}
               <button
-                className="action-btn test-btn"
-                onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + MANUAL_FORCE_STEP))}
-                disabled={manualForceN >= MANUAL_MAX_N || manualInP2}
-              >+ 20 N</button>
+                className={`action-btn replay-btn${!darkMode ? ' active' : ''}`}
+                onClick={() => setDarkMode(f => !f)}
+                style={{ fontSize: 18, padding: '3px 9px 4px', lineHeight: 1, textShadow: darkMode ? '0 0 8px rgba(180,210,255,0.95), 0 0 18px rgba(120,170,255,0.6)' : '0 0 8px rgba(255,220,50,0.95), 0 0 18px rgba(255,160,0,0.65)' }}
+              >{darkMode ? '☽' : '☀'}</button>
             </div>
           )}
 
