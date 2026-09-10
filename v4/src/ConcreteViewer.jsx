@@ -506,7 +506,6 @@ export default function ConcreteViewer() {
   const [speedIdx, setSpeedIdx]     = useState(2)
   const [controlTab, setControlTab] = useState('ratio')
   const [manualForceN, setManualForceN] = useState(0)
-  const [manualSandPct, setManualSandPct] = useState(MANUAL_SAND_PCT)
   const [manualRecording, setManualRecording] = useState(null)  // preloaded recording for manual tab
   const [manualBreakN, setManualBreakN] = useState(null)        // forceN at first fault bond break
   const [manualPhysBase, setManualPhysBase] = useState(null)    // rest-position particles + bond connectivity
@@ -698,7 +697,7 @@ export default function ConcreteViewer() {
 
 
   const isManual = controlTab === 'manual'
-  const panelSandPct = isManual ? manualSandPct : sandPct
+  const panelSandPct = sandPct
   const manualNormForce = manualForceN / MANUAL_MAX_N
 
   const grains = useMemo(
@@ -726,10 +725,10 @@ export default function ConcreteViewer() {
     setManualBreakN(null)
     if (controlTab === 'manual') setManualForceN(0)
 
-    const g = buildGrains(manualSandPct, layoutSeed * 7919 + manualSandPct * 137 + 42)
+    const g = buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42)
     const ions = buildIons(g)
     const lattices = g.map(buildLattice)
-    const phys = buildPhysics(ions, g, lattices, (crackParams[manualSandPct] ?? crackParams[40]).widthMul * 1.5)
+    const phys = buildPhysics(ions, g, lattices, (crackParams[sandPct] ?? crackParams[40]).widthMul * 1.5)
 
     const recording = []
     let foundBreakN = null
@@ -764,7 +763,7 @@ export default function ConcreteViewer() {
     })
     setManualRecording(recording)
     setManualBreakN(foundBreakN)
-  }, [controlTab, layoutSeed, manualSandPct])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [controlTab, layoutSeed])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const p2Duration = 833  // ms — matches live Phase 2 P2_DURATION
 
@@ -843,7 +842,7 @@ export default function ConcreteViewer() {
   }
 
   function handleSandPct(pct) {
-    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null)
+    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null); setManualRecording(null); setManualForceN(0); setManualBreakN(null); setManualP2T(0)
   }
 
   function handleRecordingReady(p2Frac) { setHasRecording(true); if (p2Frac != null) setP2StartFrac(p2Frac) }
@@ -1146,8 +1145,8 @@ export default function ConcreteViewer() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   {SAND_PRESETS.map(pct => (
                     <button key={pct}
-                      className={`preset-btn ${manualSandPct === pct ? 'active' : ''}`}
-                      onClick={() => setManualSandPct(pct)}
+                      className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
+                      onClick={() => handleSandPct(pct)}
                     >
                       <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
                     </button>
