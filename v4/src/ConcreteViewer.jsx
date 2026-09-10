@@ -520,8 +520,8 @@ export default function ConcreteViewer() {
   const [zoomScrubT,  setZoomScrubT]  = useState(0)
   const [breakKN, setBreakKN] = useState(null)
   const [lcdKN, setLcdKN] = useState(0)
-  const [lcdX, setLcdX] = useState(36.5)
-  const [lcdY, setLcdY] = useState(60)
+  const [lcdX, setLcdX] = useState(73.8)
+  const [lcdY, setLcdY] = useState(13)
   const [capLength, setCapLength] = useState(10.5)
   const [capAngle,  setCapAngle]  = useState(33)
   const [p2StartFrac, setP2StartFrac] = useState(null)
@@ -581,8 +581,8 @@ export default function ConcreteViewer() {
 
   // Overlay image positioning
   const [pusherX,    setPusherX]    = useState(75.3)
-  const [pusherY,    setPusherY]    = useState(-13)
-  const [pusherSize, setPusherSize] = useState(25)
+  const [pusherY,    setPusherY]    = useState(-15.5)
+  const [pusherSize, setPusherSize] = useState(27)
   const [barX,       setBarX]       = useState(21.9)
   const [barY,       setBarY]       = useState(8.6)
   const [barSize,    setBarSize]    = useState(70.4)
@@ -643,6 +643,7 @@ export default function ConcreteViewer() {
   const replayRef      = useRef(false)
   const blueReplayRef  = useRef(false)
   const lcdRafRef      = useRef(null)
+  const replayRafRef   = useRef(null)
   const breakFiredRef  = useRef(false)
 
   function cancelZoom() {
@@ -827,7 +828,22 @@ export default function ConcreteViewer() {
     )
   }, [macroCrackStrands, currentCrackParams.depth])
 
-  function clearRecording() { setHasRecording(false); setScrubT(1) }
+  function clearRecording() {
+    if (replayRafRef.current) { cancelAnimationFrame(replayRafRef.current); replayRafRef.current = null }
+    setHasRecording(false); setScrubT(1)
+  }
+  function startReplay(speedMul) {
+    if (replayRafRef.current) cancelAnimationFrame(replayRafRef.current)
+    const duration = 3000 / speedMul
+    const start = performance.now()
+    setScrubT(0)
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration)
+      setScrubT(t)
+      if (t < 1) replayRafRef.current = requestAnimationFrame(tick)
+    }
+    replayRafRef.current = requestAnimationFrame(tick)
+  }
   function startTest()  { breakFiredRef.current = false; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(bondCounts) }
   function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLcdKN(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setInitialBondCounts(null) }
   function handleReplay() {
@@ -842,7 +858,7 @@ export default function ConcreteViewer() {
   }
 
   function handleSandPct(pct) {
-    clearRecording(); setSandPct(pct); setPhase('idle'); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null); setManualRecording(null); setManualForceN(0); setManualBreakN(null); setManualP2T(0)
+    clearRecording(); setSandPct(pct); setPhase('idle'); setLcdKN(0); setLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setBreakKN(null); setInitialBondCounts(null); setManualRecording(null); setManualForceN(0); setManualBreakN(null); setManualP2T(0)
   }
 
   function handleRecordingReady(p2Frac) { setHasRecording(true); if (p2Frac != null) setP2StartFrac(p2Frac) }
@@ -1002,6 +1018,13 @@ export default function ConcreteViewer() {
   // Effective bend anim: 1.0 in manual mode (force directly controls bend), else scrub or ramp
   const effectiveBendAnim = isManual ? 1.0 : (photoView === 'off' && hasRecording ? scrubT : bendAnim)
 
+  // Force shown in LCD during scrub: linearly interpolated across p1 portion of recording
+  const scrubDisplayKN = (() => {
+    if (phase !== 'failed' || breakKN == null || !hasRecording || p2StartFrac == null) return null
+    if (scrubT >= p2StartFrac) return breakKN
+    return scrubT / p2StartFrac * breakKN
+  })()
+
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
   const tPusher      = Math.max(0, Math.min(1, (pusherX - barX) / Math.max(barSize, 0.1)))
@@ -1037,16 +1060,25 @@ export default function ConcreteViewer() {
           <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
           {/* Scrub slider + replay — sits between the bottom bolts; hidden in manual mode */}
-          <div style={{ position: 'absolute', bottom: 2, left: 50, right: 70, display: isManual ? 'none' : 'flex', alignItems: 'center', gap: 50 }}>
-            <div style={{ flex: 1, minWidth: 0, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
-              <ScrubSlider value={scrubT} onChange={setScrubT} disabled={!activeHasRecording} />
+          <div style={{ position: 'absolute', bottom: 7, left: 50, right: 30, display: isManual ? 'none' : 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0, marginRight: 50, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
+              <ScrubSlider value={scrubT} onChange={v => {
+                if (replayRafRef.current) { cancelAnimationFrame(replayRafRef.current); replayRafRef.current = null }
+                setScrubT(v)
+              }} disabled={!activeHasRecording} />
             </div>
             <button
               className="action-btn test-btn"
-              onClick={() => setScrubT(0)}
+              onClick={() => startReplay(0.25)}
               disabled={!activeHasRecording}
-              style={{ flexShrink: 0 }}
-            >↺ Replay</button>
+              style={{ flexShrink: 0, transform: 'translateX(-30px)' }}
+            >🐢↺</button>
+            <button
+              className="action-btn test-btn"
+              onClick={() => startReplay(1)}
+              disabled={!activeHasRecording}
+              style={{ flexShrink: 0, transform: 'translateX(-20px)' }}
+            >🐇↺</button>
           </div>
           {/* Tab strip */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginBottom: 5 }}>
@@ -1084,6 +1116,11 @@ export default function ConcreteViewer() {
                 ? <button className="action-btn test-btn" onClick={() => handleSandPct(sandPct)}>Reset</button>
                 : <button className="action-btn test-btn" onClick={startTest} disabled={phase === 'testing'}>Test</button>
               }
+              <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 14, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+                <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
+                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
+                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(scrubDisplayKN ?? lcdKN)}</span>
+              </div>
               <div className="toolbar-divider" />
               {photoView === 'off' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -1102,17 +1139,8 @@ export default function ConcreteViewer() {
                 </div>
               )}
               <div className="toolbar-divider" />
-              {/* Right: LCD force readout + theme toggle */}
+              {/* Right: theme toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{
-                  color: '#e4ddd0', fontSize: 18, fontWeight: 700, minWidth: 80,
-                  textAlign: 'center', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em',
-                  textShadow: '0 1px 3px rgba(0,0,0,0.6)',
-                }}>
-                  {phase === 'failed' && breakKN != null
-                    ? `${breakKN} kN`
-                    : `${Math.round(lcdKN / 100) / 10} kN`}
-                </div>
                 <button
                   className={`action-btn replay-btn${!darkMode ? ' active' : ''}`}
                   onClick={() => setDarkMode(f => !f)}
@@ -1155,19 +1183,17 @@ export default function ConcreteViewer() {
                   className="action-btn replay-btn"
                   onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
                   disabled={manualForceN === 0 || manualInP2}
-                >− 20 N</button>
-                <div style={{
-                  color: '#e4ddd0', fontSize: 18, fontWeight: 700, minWidth: 90,
-                  textAlign: 'center', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em',
-                  textShadow: '0 1px 3px rgba(0,0,0,0.6)',
-                }}>
-                  {manualForceN} N
+                ><span style={{ position: 'relative', top: 3 }}><span style={{ fontSize: '2em', lineHeight: 0 }}>−</span> 20</span></button>
+                <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 14, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+                  <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
+                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
+                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{manualForceN}</span>
                 </div>
                 <button
                   className="action-btn test-btn"
                   onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + MANUAL_FORCE_STEP))}
                   disabled={manualInP2}
-                >+ 20 N</button>
+                ><span style={{ position: 'relative', top: 3 }}><span style={{ fontSize: '2em', lineHeight: 0 }}>+</span> 20</span></button>
               </div>
               <div className="toolbar-divider" />
               {/* Show/Hide Visuals */}
@@ -1201,7 +1227,7 @@ export default function ConcreteViewer() {
               overflow: 'hidden',
               aspectRatio: `3000 / ${PZL_IMG_H * (1 - cropFrac)}`,
               cursor: photoView === 'off' ? 'zoom-out' : 'default',
-              transform: 'scale(1.1)',
+              transform: `translateY(${pusherDropPct}%) scale(1.1)`,
               transformOrigin: 'top center',
             }}
             onClick={() => { if (photoView === 'off') zoomOut() }}
@@ -1217,7 +1243,7 @@ export default function ConcreteViewer() {
               scrubElapsed={scrubElapsed}
               pusherX={pusherX} pusherY={pusherY + pusherDropPct}
               pusherSize={pusherSize}
-              lcdX={lcdX} lcdY={lcdY} lcdKN={lcdKN} containerW={308} lcdNudge={{ dx: 0, dy: 5 }}
+              lcdX={lcdX} lcdY={lcdY} lcdKN={scrubDisplayKN ?? lcdKN} containerW={308} lcdNudge={{ dx: 0, dy: 5 }}
               showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
               photoViewIsZooming={photoView === 'zooming'}
               photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
@@ -1548,8 +1574,8 @@ export default function ConcreteViewer() {
                 // translate keeps zoom target at viewport centre: as scale grows, the offset
                 // from photo-centre to zoom-target is amplified, so we counter it exactly.
                 transform: effectivePhotoScale === 1
-                  ? 'none'
-                  : `translate(${-effectivePhotoScale * (zoomOriginX - 50)}%, ${-effectivePhotoScale * (zoomOriginY - 50)}%) scale(${effectivePhotoScale})`,
+                  ? `translateY(${pusherDropPct}%)`
+                  : `translateY(${pusherDropPct}%) translate(${-effectivePhotoScale * (zoomOriginX - 50)}%, ${-effectivePhotoScale * (zoomOriginY - 50)}%) scale(${effectivePhotoScale})`,
                 imageRendering: effectivePhotoScale > 5 ? 'pixelated' : 'auto',
               }}
             >
@@ -1564,7 +1590,7 @@ export default function ConcreteViewer() {
                 scrubElapsed={scrubElapsed}
                 pusherX={pusherX} pusherY={pusherY + pusherDropPct}
                 pusherSize={pusherSize}
-                lcdX={lcdX} lcdY={lcdY} lcdKN={lcdKN} containerW={zoomLayerW}
+                lcdX={lcdX} lcdY={lcdY} lcdKN={scrubDisplayKN ?? lcdKN} containerW={zoomLayerW}
                 showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
                 photoViewIsZooming={photoView === 'zooming'}
                 photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
