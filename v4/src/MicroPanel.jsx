@@ -235,43 +235,75 @@ function computeCrackPath(bonds, particles) {
   const CROP_X0 = (VW - VH) / 2
   const CROP_X1 = (VW + VH) / 2
 
-  // Group non-diagonal inCrop non-edgeProtected cs bond midpoints by x column (grain face)
+  // Group non-diagonal inCrop non-edgeProtected cs bond midpoints by x column (grain face).
+  // Track which grain indices contribute to each face — when two different grains share the
+  // same face column it means they're directly adjacent (one cement particle bonded to both).
   const faceMap = new Map()
   for (const b of bonds) {
     if (b.diagonal || !b.inCrop || b.edgeProtected || b.type !== 'cs') continue
     const pi = particles[b.i], pj = particles[b.j]
+    const grainP = pi.isGrain ? pi : pj
     const mx = (pi.x0 + pj.x0) / 2
     const my = (pi.y0 + pj.y0) / 2
     if (mx <= CROP_X0 + MATRIX_SPACING * 2 || mx >= CROP_X1 - MATRIX_SPACING * 2) continue
-    const key = Math.round(mx * 4)               // round to nearest 0.25 px — bonds on same face share exact x
-    if (!faceMap.has(key)) faceMap.set(key, { x: mx, minY: my, maxY: my })
-    else { const f = faceMap.get(key); f.minY = Math.min(f.minY, my); f.maxY = Math.max(f.maxY, my) }
+    const key = Math.round(mx * 4)  // bonds on same face share exact x
+    if (!faceMap.has(key)) {
+      faceMap.set(key, { x: mx, minY: my, maxY: my, grainSet: new Set([grainP.grainIdx]) })
+    } else {
+      const f = faceMap.get(key)
+      f.minY = Math.min(f.minY, my)
+      f.maxY = Math.max(f.maxY, my)
+      f.grainSet.add(grainP.grainIdx)
+    }
   }
 
   if (faceMap.size === 0) return [{ x: midX, y: 0 }, { x: midX, y: VH }]
-  const faces = Array.from(faceMap.values())
 
-  // Nodes: source + (top, bottom) of each grain-face column
-  const nodes = [{ x: midX, y: 0 }]
-  for (const f of faces) {
-    nodes.push({ x: f.x, y: f.minY }, { x: f.x, y: f.maxY })
+  // Detect sand-sand adjacent pairs: face columns from different grains within ~2 cell widths.
+  // These are the weakest zones — almost no cement between touching or near-touching grains.
+  const SS_GAP = MATRIX_SPACING * 2.5
+  const faceList = Array.from(faceMap.entries())   // [key, face]
+  const crossGrainPairs = new Set()  // "keyA,keyB" strings for O(1) lookup
+  for (let a = 0; a < faceList.length; a++) {
+    const [ka, fa] = faceList[a]
+    for (let b = a + 1; b < faceList.length; b++) {
+      const [kb, fb] = faceList[b]
+      if (Math.abs(fa.x - fb.x) > SS_GAP) continue
+      // Any grain in fa not present in fb (or vice versa) → different grains are adjacent
+      const allSame = [...fa.grainSet].every(g => fb.grainSet.has(g)) &&
+                      [...fb.grainSet].every(g => fa.grainSet.has(g))
+      if (!allSame) { crossGrainPairs.add(`${ka},${kb}`); crossGrainPairs.add(`${kb},${ka}`) }
+    }
   }
+
+  const faces = Array.from(faceMap.values())
+  const nodes = [{ x: midX, y: 0 }]
+  for (const f of faces) nodes.push({ x: f.x, y: f.minY }, { x: f.x, y: f.maxY })
   const N = nodes.length
 
-  const H_PENALTY  = 3   // cost per px horizontal (cement gap between faces)
-  const FACE_BONUS = 10  // reward per px vertical grain-face traversal (Si-OH bonds)
+  const H_PENALTY  = 3   // cost per px horizontal through cement
+  const FACE_BONUS = 10  // reward per px along single-grain face (Si-OH bonds)
+  const SS_BONUS   = 28  // reward per px along sand-sand shared face (both grains bonding same cement)
+  const SS_H_BONUS = 6   // extra horizontal reward per px when hopping between adjacent-grain faces
 
   function edgeCost(ux, uy, vx, vy) {
-    const f    = faceMap.get(Math.round(vx * 4))
+    const srcKey = Math.round(ux * 4)
+    const dstKey = Math.round(vx * 4)
+    const f    = faceMap.get(dstKey)
     const face = f ? Math.max(0, Math.min(vy, f.maxY) - Math.max(uy, f.minY)) : 0
-    return Math.abs(vx - ux) * H_PENALTY + (vy - uy - face) - FACE_BONUS * face
+    // Sand-sand shared face (two grain indices at same x) → big extra bonus
+    const isSS = f?.grainSet.size > 1
+    // Horizontal: normal penalty, or reduced when hopping between adjacent grain faces
+    const hGap = Math.abs(vx - ux)
+    const isCrossGrain = crossGrainPairs.has(`${srcKey},${dstKey}`)
+    const hCost = hGap * (isCrossGrain ? H_PENALTY - SS_H_BONUS : H_PENALTY)
+    return hCost + (vy - uy - face) - FACE_BONUS * face - (isSS ? SS_BONUS : 0) * face
   }
 
   const dist = new Float32Array(N).fill(1e9)
   const prev = new Int32Array(N).fill(-1)
   dist[0] = 0
 
-  // Bellman-Ford on downward DAG — no negative cycles possible
   for (let iter = 0; iter < N - 1; iter++) {
     let changed = false
     for (let u = 0; u < N; u++) {
@@ -288,7 +320,6 @@ function computeCrackPath(bonds, particles) {
     if (!changed) break
   }
 
-  // Best terminal: min (path cost + remaining cement tail to VH)
   let bestU = -1, bestD = 1e9
   for (let i = 1; i < N; i++) {
     if (dist[i] >= 1e9) continue
