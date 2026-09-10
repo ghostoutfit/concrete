@@ -483,7 +483,7 @@ body {
   width: 220px;
   display: flex;
   flex-direction: column;
-  padding: 16px;
+  padding: 16px 16px 16px 30px;
   box-sizing: border-box;
   gap: 12px;
 }
