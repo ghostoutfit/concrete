@@ -1751,8 +1751,9 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           applyP1Snapshot(physRef.current, lastP1SnapRef.current)
         }
         prevSt = st
-        // Scrub takes priority over live animation; live plays when not scrubbing.
-        if (st !== null && rec.length > 0) {
+        // Scrub mode: always for preloaded recordings (manual tab), or after live animation completes.
+        const hasPreload = !!preloadedRecordingRef.current?.length
+        if (st !== null && rec.length > 0 && (hasPreload || p2ProgressRef.current >= 1)) {
           const snap = rec[Math.round(st * (rec.length - 1))]
           if (snap.type === 'p2') {
             if (lastP1SnapRef.current) applyP1Snapshot(physRef.current, lastP1SnapRef.current)
@@ -1791,7 +1792,8 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
     dispForceRef.current = 0
     p2StartTimeRef.current = null
     p2BreakDispRef.current = 0
-    p2ProgressRef.current  = 0
+    p2ProgressRef.current = 0
+    currentP2ProgressRef.current = 0
     b2phaseRef.current = 'phase1'
     let frameCount = 0
     let prevBroken = 0
