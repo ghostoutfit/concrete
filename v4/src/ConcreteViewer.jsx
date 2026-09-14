@@ -1106,7 +1106,7 @@ export default function ConcreteViewer() {
           <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginBottom: 5 }}>
             <button
               className={`tab-btn ${controlTab === 'ratio' ? 'active' : ''}`}
-              onClick={() => setControlTab('ratio')}
+              onClick={() => { setControlTab('ratio'); breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(null) }}
             >Break Test</button>
             <button
               className={`tab-btn ${controlTab === 'manual' ? 'active' : ''}`}
@@ -1138,7 +1138,7 @@ export default function ConcreteViewer() {
                 ? <button className="action-btn test-btn" onClick={() => handleSandPct(sandPct)}>Reset</button>
                 : <button className="action-btn test-btn" onClick={startTest} disabled={phase === 'testing'}>Test</button>
               }
-              <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 14, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+              <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
                 <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
                 <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
                 <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)}</span>
@@ -1216,7 +1216,7 @@ export default function ConcreteViewer() {
                   onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
                   disabled={manualForceN === 0 || manualInP2}
                 ><span style={{ position: 'relative', top: 3 }}><span style={{ fontSize: '2em', lineHeight: 0 }}>−</span> 20</span></button>
-                <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 14, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+                <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
                   <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
                   <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
                   <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{manualForceN}</span>
@@ -1294,7 +1294,7 @@ export default function ConcreteViewer() {
               scrubElapsed={scrubElapsed}
               pusherX={pusherX} pusherY={pusherY + pusherDropPct} pusherNudgePct={-0.5}
               pusherSize={pusherSize}
-              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)} containerW={miniPhotoW}
+              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)} containerW={miniPhotoW} lcdNudge={{ dx: 0, dy: -1 }}
               showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
               photoViewIsZooming={photoView === 'zooming'}
               photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
