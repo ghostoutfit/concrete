@@ -1383,14 +1383,14 @@ export default function ConcreteViewer() {
                 })
                 const totalBroken = colData.reduce((s, d) => s + d.broken, 0)
                 const valueRows = [
-                  { key: 'before', label: 'before', getCell: d => ({ val: d.before, bold: false }) },
-                  { key: 'now',    label: 'now',    getCell: d => ({ val: tested ? d.now : null, bold: false }) },
-                  { key: 'broken', label: 'broken', getCell: d => ({
+                  { key: 'before', label: 'Before', getCell: d => ({ val: d.before, bold: false }) },
+                  { key: 'now',    label: 'Now',    getCell: d => ({ val: tested ? d.now : null, bold: false }) },
+                  { key: 'broken', label: 'Broken', getCell: d => ({
                     val: tested ? d.broken : null,
                     pct: tested && d.before > 0 ? d.broken / d.before * 100 : null,
                     bold: true,
                   }) },
-                  { key: 'total', label: 'total', getCell: d => ({
+                  { key: 'total', label: 'Total', getCell: d => ({
                     pct: tested && totalBroken > 0 ? d.broken / totalBroken * 100 : null,
                     bold: false,
                   }) },
@@ -1398,7 +1398,7 @@ export default function ConcreteViewer() {
                 return (
                   <div style={{ padding: '6px 4px', display: 'flex', flexDirection: 'column', gap: 0, height: '100%', boxSizing: 'border-box' }}>
                     {/* Column headers — bond type icons + labels */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'end', marginBottom: 4 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '42px 0.9fr 0.9fr 0.9fr', gap: '0', alignItems: 'end', marginBottom: 4 }}>
                       <span />
                       {colData.map(({ key, label, color, icon }) => (
                         <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
@@ -1409,7 +1409,7 @@ export default function ConcreteViewer() {
                     </div>
                     {/* Value rows */}
                     {valueRows.map(({ key, label, getCell }) => (
-                      <div key={key} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
+                      <div key={key} style={{ display: 'grid', gridTemplateColumns: '42px 0.9fr 0.9fr 0.9fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
                         <span style={{ fontSize: 14, letterSpacing: '0.07em', color: darkMode ? '#888' : '#bbb', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         {colData.map(d => {
                           const { val, pct, bold } = getCell(d)
