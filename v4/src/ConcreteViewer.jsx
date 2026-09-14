@@ -1135,7 +1135,7 @@ export default function ConcreteViewer() {
               </div>
               <div className="toolbar-divider" />
               {phase === 'failed' || phase === 'settled'
-                ? <button className="action-btn test-btn" onClick={() => handleSandPct(sandPct)}>Reset</button>
+                ? <button className="action-btn test-btn" style={{ padding: '3px 11px 3px' }} onClick={() => handleSandPct(sandPct)}>Reset</button>
                 : <button className="action-btn test-btn" onClick={startTest} disabled={phase === 'testing'}>Test</button>
               }
               <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
