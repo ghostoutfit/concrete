@@ -1383,14 +1383,14 @@ export default function ConcreteViewer() {
                 })
                 const totalBroken = colData.reduce((s, d) => s + d.broken, 0)
                 const valueRows = [
-                  { key: 'before', label: 'Before', getCell: d => ({ val: d.before, bold: false }) },
-                  { key: 'now',    label: 'Now',    getCell: d => ({ val: tested ? d.now : null, bold: false }) },
-                  { key: 'broken', label: 'Broken', getCell: d => ({
+                  { key: 'before', label: 'before', getCell: d => ({ val: d.before, bold: false }) },
+                  { key: 'now',    label: 'now',    getCell: d => ({ val: tested ? d.now : null, bold: false }) },
+                  { key: 'broken', label: 'broken', getCell: d => ({
                     val: tested ? d.broken : null,
                     pct: tested && d.before > 0 ? d.broken / d.before * 100 : null,
                     bold: true,
                   }) },
-                  { key: 'total', label: 'Total', getCell: d => ({
+                  { key: 'total', label: 'total', getCell: d => ({
                     pct: tested && totalBroken > 0 ? d.broken / totalBroken * 100 : null,
                     bold: false,
                   }) },
@@ -1410,7 +1410,7 @@ export default function ConcreteViewer() {
                     {/* Value rows */}
                     {valueRows.map(({ key, label, getCell }) => (
                       <div key={key} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
-                        <span style={{ fontSize: 14, letterSpacing: '0.07em', color: darkMode ? '#666' : '#888', textTransform: 'uppercase', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
+                        <span style={{ fontSize: 14, letterSpacing: '0.07em', color: darkMode ? '#888' : '#bbb', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         {colData.map(d => {
                           const { val, pct, bold } = getCell(d)
                           return (
