@@ -1326,14 +1326,14 @@ export function BondIcon({ particles, bonds, scale = 1.5, darkMode = true, showC
     lctx.setTransform(s, 0, 0, s, tx, ty)
     for (const bond of bonds) {
       const pa = particles[bond.i], pb = particles[bond.j]
-      lctx.globalAlpha = darkMode ? 0.82 : 0.80
+      lctx.globalAlpha = 1.0
       lctx.fillStyle = strainColor(0, 1)
-      fillLens(lctx, pa.x, pa.y, pb.x, pb.y, 1.6)
+      fillLens(lctx, pa.x, pa.y, pb.x, pb.y, 2.4)
       lctx.fill()
     }
     ctx.save()
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.filter = 'blur(3px)'
+    ctx.filter = 'blur(4px)'
     ctx.drawImage(layer, 0, 0)
     ctx.filter = 'none'
     ctx.restore()
@@ -1853,20 +1853,8 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
 
       const brokenNow = phys.bonds.filter(b => b.broken).length
 
-      if (frameCount === 0) {
-        const faultBonds = phys.bonds.filter(b => b.isFault)
-        console.log('[MicroPanelB] fault bonds:', faultBonds.length, 'types:', [...new Set(faultBonds.map(b=>b.type))], 'min breakStrain:', Math.min(...faultBonds.map(b=>b.breakStrain)), 'canBreak:', canBreak)
-      }
-      if (frameCount % 30 === 0) {
-        const faultBroken = phys.bonds.filter(b => b.isFault && b.broken).length
-        const maxStrain = phys.bonds.filter(b=>b.isFault && !b.broken).reduce((m,b)=>Math.max(m,Math.abs(b.strain)),0)
-        console.log(`[MicroPanelB] frame=${frameCount} dispForce=${dispForceRef.current.toFixed(3)} currentDisp=${phys.currentDisp.toFixed(2)} faultBroken=${faultBroken} maxFaultStrain=${maxStrain.toFixed(4)} brokenNow=${brokenNow}`)
-      }
-
       // First break → hand off to drawPhase2Scene in the settled/failed drawLoop
       if (canBreak && b2phaseRef.current === 'phase1' && brokenNow > 0) {
-        const p2Active = phys.p2frac ? phys.p2frac.filter(f => f < 2).length : -1
-        console.log('[MicroPanelB] BREAK FIRED! frame=', frameCount, 'dispForce=', dispForceRef.current.toFixed(3), 'brokenNow=', brokenNow, 'p2Active=', p2Active, 'p2disp[0]=', phys.p2disp?.[0]?.toFixed(4))
         b2phaseRef.current = 'phase2'
         p2StartTimeRef.current = ts
         const snap = snapshotP1(phys, 0, ts)

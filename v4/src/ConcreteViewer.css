@@ -167,9 +167,9 @@ body {
 /* ── test / action buttons ── */
 .action-btn {
   position: relative;
-  padding: 5px 13px 6px;
+  padding: 3px 18px 3px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -295,12 +295,12 @@ body {
 
 /* ── control tabs ── */
 .tab-btn {
-  padding: 4px 11px 5px;
+  padding: 2px 15px 2px;
   border-radius: 3px 3px 0 0;
   border: 1px solid transparent;
   border-bottom: none;
   background: transparent;
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -481,12 +481,12 @@ body {
 
 .force-viz-space {
   flex: none;
-  width: 220px;
+  width: 380px;
   display: flex;
   flex-direction: column;
-  padding: 16px 16px 16px 30px;
+  padding: 16px 16px 16px 22px;
   box-sizing: border-box;
-  gap: 12px;
+  gap: 24px;
 }
 
 .bond-analysis-box {

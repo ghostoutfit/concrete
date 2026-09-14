@@ -44,9 +44,9 @@ const CRACK_X_FAC  = 0.50  // macro horizontal spread factor
 
 const BAR_SRCS = {
   0:  ['/concrete/0Sandbar.png',  null],
-  20: ['/concrete/0Sandbar.png',  '/concrete/40Sandbar.png'],
+  20: ['/concrete/20Sandbar.png', null],
   40: ['/concrete/40Sandbar.png', null],
-  60: ['/concrete/40Sandbar.png', '/concrete/80Sandbar.png'],
+  60: ['/concrete/60Sandbar.png', null],
   80: ['/concrete/80Sandbar.png', null],
 }
 
@@ -1119,8 +1119,8 @@ export default function ConcreteViewer() {
               {/* Sand preset group — heading centered only on presets */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
-                  <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   {SAND_PRESETS.map(pct => (
@@ -1146,7 +1146,7 @@ export default function ConcreteViewer() {
               <div className="toolbar-divider" />
               {photoView === 'off' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)' }}>Show/Hide Visuals</span>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)', fontSize: 13 }}>Show/Hide Visuals</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                     <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
                     <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
@@ -1174,7 +1174,7 @@ export default function ConcreteViewer() {
               </div>
             </div>
           ) : !manualRecording ? (
-            <div style={{ color: 'rgba(200,215,230,0.55)', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textAlign: 'center' }}>
+            <div style={{ color: 'rgba(200,215,230,0.55)', fontSize: 14, fontWeight: 600, letterSpacing: '0.08em', textAlign: 'center' }}>
               Loading…
             </div>
           ) : (
@@ -1182,8 +1182,8 @@ export default function ConcreteViewer() {
               {/* Sand:Cement presets */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
-                  <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   {SAND_PRESETS.map(pct => (
@@ -1218,7 +1218,7 @@ export default function ConcreteViewer() {
               <div className="toolbar-divider" />
               {/* Show/Hide Visuals */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)' }}>Show/Hide Visuals</span>
+                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)', fontSize: 13 }}>Show/Hide Visuals</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
                   <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
@@ -1314,7 +1314,7 @@ export default function ConcreteViewer() {
                   ))}
                   {atoms.map(({ label }, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                      <span style={{ fontSize: 11, color: darkMode ? '#999' : '#666', fontFamily: 'system-ui,sans-serif' }}>{label}</span>
+                      <span style={{ fontSize: 22, color: darkMode ? '#999' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                     </div>
                   ))}
                 </div>
@@ -1322,7 +1322,7 @@ export default function ConcreteViewer() {
             })()}
             {/* Bond strain key */}
             {showField && (
-              <svg viewBox="0 0 200 60" width="100%" style={{ display: 'block', flexShrink: 0 }}>
+              <svg viewBox="0 0 200 110" width="100%" style={{ display: 'block', flexShrink: 0 }}>
                 <defs>
                   <linearGradient id="cv-strain-grad" x1="0" x2="1" y1="0" y2="0">
                     {darkMode ? (<>
@@ -1338,10 +1338,10 @@ export default function ConcreteViewer() {
                     </>)}
                   </linearGradient>
                 </defs>
-                <text x="0" y="16" style={{ fontSize: '16px', fill: darkMode ? '#999' : '#666', fontFamily: 'system-ui,sans-serif' }}>Energy in fields:</text>
-                <rect x="0" y="20" width="200" height="12" fill="url(#cv-strain-grad)" rx="1" />
-                <text x="0"   y="54" style={{ fontSize: '18px', fill: darkMode ? '#666' : '#888', fontFamily: 'system-ui,sans-serif' }}>Low</text>
-                <text x="200" y="54" style={{ fontSize: '18px', fill: darkMode ? '#666' : '#888', fontFamily: 'system-ui,sans-serif', textAnchor: 'end' }}>High</text>
+                <text x="0" y="28" style={{ fontSize: '28px', fill: darkMode ? '#999' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }}>Energy in fields:</text>
+                <rect x="0" y="36" width="200" height="22" fill="url(#cv-strain-grad)" rx="1" />
+                <text x="0"   y="100" style={{ fontSize: '32px', fill: darkMode ? '#666' : '#888', fontFamily: 'Lexend, system-ui, sans-serif' }}>Low</text>
+                <text x="200" y="100" style={{ fontSize: '32px', fill: darkMode ? '#666' : '#888', fontFamily: 'Lexend, system-ui, sans-serif', textAnchor: 'end' }}>High</text>
               </svg>
             )}
             {showCount && <div className="bond-analysis-box">
@@ -1351,7 +1351,7 @@ export default function ConcreteViewer() {
                   {
                     key: 'sand', label: 'Sand', color: '#c8961e',
                     getValue: c => c.siO,
-                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.0} particles={[
+                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.5} particles={[
                       { x: 0, y: 0, r: 4, type: 'Si' },
                       { x: 16, y: 0, r: 3, type: 'O', isGrain: true },
                     ]} bonds={[{ i: 0, j: 1 }]} />,
@@ -1359,7 +1359,7 @@ export default function ConcreteViewer() {
                   {
                     key: 'sandCement', label: 'Sand-Cement', color: '#9c6828',
                     getValue: c => c.caO + c.siOH,
-                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.0} particles={[
+                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.5} particles={[
                       { x: 0, y: 0,  r: 5.5, type: 'Ca' },
                       { x: 16, y: 0,  r: 3,   type: 'O', isGrain: true },
                       { x: 0, y: 14, r: 4,   type: 'Si' },
@@ -1369,7 +1369,7 @@ export default function ConcreteViewer() {
                   {
                     key: 'concrete', label: 'Cement', color: '#9a9292',
                     getValue: c => c.caOH,
-                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.0} particles={[
+                    icon: <BondIcon darkMode={darkMode} showCharge={chargeVisible} scale={1.5} particles={[
                       { x: 0,  y: 0, r: 5.5, type: 'Ca' },
                       { x: 16, y: 0, r: 3,   type: 'O', isGrain: false },
                     ]} bonds={[{ i: 0, j: 1 }]} />,
@@ -1403,26 +1403,26 @@ export default function ConcreteViewer() {
                       {colData.map(({ key, label, color, icon }) => (
                         <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
                           {icon}
-                          <span style={{ fontSize: 8, color, letterSpacing: '0.04em', lineHeight: 1, textAlign: 'center' }}>{label}</span>
+                          <span style={{ fontSize: 8, color, letterSpacing: '0.04em', lineHeight: 1, textAlign: 'center', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         </div>
                       ))}
                     </div>
                     {/* Value rows */}
                     {valueRows.map(({ key, label, getCell }) => (
                       <div key={key} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
-                        <span style={{ fontSize: 8, letterSpacing: '0.07em', color: darkMode ? '#666' : '#888', textTransform: 'uppercase' }}>{label}</span>
+                        <span style={{ fontSize: 8, letterSpacing: '0.07em', color: darkMode ? '#666' : '#888', textTransform: 'uppercase', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         {colData.map(d => {
                           const { val, pct, bold } = getCell(d)
                           return (
                             <div key={d.key} style={{ textAlign: 'center' }}>
                               {val != null && (
-                                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500, lineHeight: 1.1 }}>{val}</div>
+                                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500, lineHeight: 1.1, fontFamily: 'Lexend, system-ui, sans-serif' }}>{val}</div>
                               )}
                               {pct != null && (
-                                <div style={{ fontSize: 10, color: d.color, opacity: 0.75, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{Math.round(pct)}%</div>
+                                <div style={{ fontSize: 10, color: d.color, opacity: 0.75, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, fontFamily: 'Lexend, system-ui, sans-serif' }}>{Math.round(pct)}%</div>
                               )}
                               {val == null && pct == null && (
-                                <span style={{ fontSize: 12, color: darkMode ? '#333' : '#bbb' }}>—</span>
+                                <span style={{ fontSize: 12, color: darkMode ? '#333' : '#bbb', fontFamily: 'Lexend, system-ui, sans-serif' }}>—</span>
                               )}
                             </div>
                           )
