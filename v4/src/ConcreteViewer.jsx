@@ -539,11 +539,11 @@ export default function ConcreteViewer() {
   const [capAngle,  setCapAngle]  = useState(33)
   const [p2StartFrac, setP2StartFrac] = useState(null)
   const [crackParams, setCrackParams] = useState({
-    0:  { depth: 1.24, dev: 0.00, segs: 1, branch: 0.03, widthMul: 2.23, speedMul: 1.0, taper: -0.25 },
-    20: { depth: 1.21, dev: 0.140, segs: 1, branch: 0.14, widthMul: 1.8, speedMul: 2.9, taper: -0.55 },
+    0:  { depth: 1.31, dev: 0.00, segs: 1, branch: 0.03, widthMul: 2.23, speedMul: 1.0, taper: -0.25 },
+    20: { depth: 1.31, dev: 0.140, segs: 1, branch: 0.14, widthMul: 1.8, speedMul: 2.9, taper: -0.55 },
     40: { depth: 0.67, dev: 0.565, segs: 1, branch: 0.13, widthMul: 1.6, speedMul: 1.0, taper: -0.45 },
     60: { depth: 0.6, dev: 0.21, segs: 1, branch: 0.83, widthMul: 0.7, speedMul: 1.0, taper: -0.5 },
-    80: { depth: 1.15, dev: 0.43, segs: 1, branch: 0.77, widthMul: 6.0, speedMul: 1.7, taper: -0.6 },
+    80: { depth: 1.31, dev: 0.43, segs: 1, branch: 0.77, widthMul: 6.0, speedMul: 1.7, taper: -0.6 },
   })
   function setCK(key, val) {
     setCrackParams(p => ({ ...p, [sandPct]: { ...p[sandPct], [key]: val } }))
@@ -1082,7 +1082,7 @@ export default function ConcreteViewer() {
           <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
           {/* Scrub slider + replay — sits between the bottom bolts; hidden in manual mode */}
-          <div style={{ position: 'absolute', bottom: 7, left: 50, right: 30, display: isManual ? 'none' : 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'absolute', bottom: 7, left: 50, right: 30, display: (isManual || photoView !== 'off') ? 'none' : 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0, marginRight: 50, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
               <ScrubSlider value={scrubT} onChange={v => {
                 if (replayRafRef.current) { cancelAnimationFrame(replayRafRef.current); replayRafRef.current = null }

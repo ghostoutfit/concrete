@@ -913,6 +913,18 @@ function getFieldLayer(canvas) {
   return layer
 }
 
+const grainLayerCache = new WeakMap()
+function getGrainLayer(canvas) {
+  let layer = grainLayerCache.get(canvas)
+  if (!layer || layer.width !== canvas.width || layer.height !== canvas.height) {
+    layer = document.createElement('canvas')
+    layer.width  = canvas.width
+    layer.height = canvas.height
+    grainLayerCache.set(canvas, layer)
+  }
+  return layer
+}
+
 // ── Canvas scene rendering (atoms + bonds at physics positions) ──
 function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag = false, visualScale = VISUAL_SCALE, bondRound = 1.6, showField = true, showCharge = false, darkMode = true) {
   if (!canvas) return
@@ -952,12 +964,25 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
   const vx = p => p.x0 + (p.x - p.x0) * visualScale
   const vy = p => p.y0 + (p.y - p.y0) * visualScale
 
-  // ── Goldenrod outlines around sand grains, behind bonds ──
+  // ── Goldenrod fuzzy outlines around sand grains, behind bonds ──
   if (grains?.length > 0) {
+    const gl = getGrainLayer(canvas)
+    const gctx = gl.getContext('2d')
+    gctx.clearRect(0, 0, gl.width, gl.height)
+    const { a, b: mb, c, d, e, f } = ctx.getTransform()
+    gctx.setTransform(a, mb, c, d, e, f)
+    gctx.strokeStyle = 'rgba(218,165,32,1.0)'
+    gctx.lineWidth = 2.0
+    for (const g of grains) {
+      gctx.beginPath()
+      gctx.roundRect(g.x, g.y, g.w, g.h, 4)
+      gctx.stroke()
+    }
     ctx.save()
-    ctx.strokeStyle = 'rgba(218,165,32,0.60)'
-    ctx.lineWidth = 1.0
-    for (const g of grains) ctx.strokeRect(g.x, g.y, g.w, g.h)
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.filter = 'blur(2px)'
+    ctx.drawImage(gl, 0, 0)
+    ctx.filter = 'none'
     ctx.restore()
   }
 
@@ -1133,12 +1158,29 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     xs[i] = particles[i].x0 + p2disp[i] * eased
   }
 
-  // ── Goldenrod outlines around sand grains, behind bonds ──
+  // ── Goldenrod fuzzy outlines around sand grains, behind bonds ──
   if (grains?.length > 0) {
+    const gl = getGrainLayer(canvas)
+    const gctx = gl.getContext('2d')
+    gctx.clearRect(0, 0, gl.width, gl.height)
+    const { a, b: mb, c, d, e, f } = ctx.getTransform()
+    gctx.setTransform(a, mb, c, d, e, f)
+    gctx.strokeStyle = 'rgba(218,165,32,1.0)'
+    gctx.lineWidth = 2.0
+    for (let gi = 0; gi < grains.length; gi++) {
+      const g = grains[gi]
+      const gpi = grainParticles?.[gi]
+      const fi = gpi?.[0] ?? -1
+      const dx = fi >= 0 ? xs[fi] - particles[fi].x0 : 0
+      gctx.beginPath()
+      gctx.roundRect(g.x + dx, g.y, g.w, g.h, 4)
+      gctx.stroke()
+    }
     ctx.save()
-    ctx.strokeStyle = 'rgba(218,165,32,0.60)'
-    ctx.lineWidth = 1.0
-    for (const g of grains) ctx.strokeRect(g.x, g.y, g.w, g.h)
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.filter = 'blur(2px)'
+    ctx.drawImage(gl, 0, 0)
+    ctx.filter = 'none'
     ctx.restore()
   }
 
