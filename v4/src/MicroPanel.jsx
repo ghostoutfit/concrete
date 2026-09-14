@@ -967,7 +967,7 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
       const pi = particles[bond.i], pj = particles[bond.j]
       const da = bondCurDistAlpha(pj.x - pi.x, pj.y - pi.y)
       if (da <= 0) continue
-      lctx.globalAlpha = (darkMode ? 0.82 : 0.80) * bond.fieldAlpha * da
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.92) * bond.fieldAlpha * da
       lctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
       fillLens(lctx, vx(pi), vy(pi), vx(pj), vy(pj), bondRound)
       lctx.fill()
@@ -976,6 +976,7 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.filter = 'blur(3px)'
     ctx.globalAlpha = 1
+    if (!darkMode) ctx.globalCompositeOperation = 'multiply'
     ctx.drawImage(layer, 0, 0)
     ctx.filter = 'none'
     ctx.restore()
@@ -1146,7 +1147,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
         const stretch = Math.max(0, curLen - bond.restLen) / bond.restLen
         const alpha = Math.max(0, 1 - stretch * 2) * da
         if (alpha > 0) {
-          lctx.globalAlpha = alpha * (darkMode ? 0.85 : 0.80)
+          lctx.globalAlpha = alpha * (darkMode ? 0.85 : 0.92)
           lctx.fillStyle = strainColor(bond.strain, bond.breakStrain)
           fillLens(lctx, ax, ay, bx, by, bondRound)
           lctx.fill()
@@ -1154,7 +1155,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
         continue
       }
       if (bond.fieldAlpha <= 0 || da <= 0) continue
-      lctx.globalAlpha = (darkMode ? 0.82 : 0.80) * bond.fieldAlpha * da
+      lctx.globalAlpha = (darkMode ? 0.82 : 0.92) * bond.fieldAlpha * da
       const actualLen = Math.hypot(bx - ax, by - ay)
       const actualStrain = (actualLen - bond.restLen) / bond.restLen
       lctx.fillStyle = strainColor(actualStrain, bond.breakStrain)
@@ -1165,6 +1166,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.filter = 'blur(3px)'
     ctx.globalAlpha = 1
+    if (!darkMode) ctx.globalCompositeOperation = 'multiply'
     ctx.drawImage(layer, 0, 0)
     ctx.filter = 'none'
     ctx.restore()
