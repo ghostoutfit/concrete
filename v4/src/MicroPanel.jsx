@@ -1007,7 +1007,7 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
       const cr = 8
       const grad = ctx.createRadialGradient(px, py, 0, px, py, cr)
       grad.addColorStop(0,     `rgba(${rgb},1.0)`)
-      grad.addColorStop(3/cr,  `rgba(${rgb},1.0)`)
+      grad.addColorStop(1/cr,  `rgba(${rgb},1.0)`)
       grad.addColorStop(1,     `rgba(${rgb},0)`)
       ctx.beginPath()
       ctx.arc(px, py, cr, 0, Math.PI * 2)
@@ -1217,7 +1217,7 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
       const cr = 8
       const grad = ctx.createRadialGradient(px, py, 0, px, py, cr)
       grad.addColorStop(0,     `rgba(${rgb},1.0)`)
-      grad.addColorStop(3/cr,  `rgba(${rgb},1.0)`)
+      grad.addColorStop(1/cr,  `rgba(${rgb},1.0)`)
       grad.addColorStop(1,     `rgba(${rgb},0)`)
       ctx.beginPath()
       ctx.arc(px, py, cr, 0, Math.PI * 2)
@@ -1375,7 +1375,7 @@ export function BondIcon({ particles, bonds, scale = 1.5, darkMode = true, showC
         const cr = p.r * 2
         const cGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, cr)
         cGrad.addColorStop(0,     `rgba(${rgb},1.0)`)
-        cGrad.addColorStop(3/cr,  `rgba(${rgb},1.0)`)
+        cGrad.addColorStop(1/cr,  `rgba(${rgb},1.0)`)
         cGrad.addColorStop(1,     `rgba(${rgb},0)`)
         ctx.beginPath()
         ctx.arc(p.x, p.y, cr, 0, Math.PI * 2)
