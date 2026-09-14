@@ -1161,7 +1161,7 @@ export default function ConcreteViewer() {
               <div className="toolbar-divider" />
               {/* Right: theme toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none' }}>{darkMode ? '☽' : '☀'}</span>
+                <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020' }}>{darkMode ? '☽' : '☀'}</span>
                 <div
                   onClick={() => setDarkMode(f => !f)}
                   style={{
@@ -1239,7 +1239,7 @@ export default function ConcreteViewer() {
               </div>
               <div className="toolbar-divider" />
               {/* Theme toggle */}
-              <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none' }}>{darkMode ? '☽' : '☀'}</span>
+              <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020' }}>{darkMode ? '☽' : '☀'}</span>
               <div
                 onClick={() => setDarkMode(f => !f)}
                 style={{
