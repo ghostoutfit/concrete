@@ -1410,7 +1410,7 @@ export default function ConcreteViewer() {
                     {/* Value rows */}
                     {valueRows.map(({ key, label, getCell }) => (
                       <div key={key} style={{ display: 'grid', gridTemplateColumns: '42px 0.9fr 0.9fr 0.9fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
-                        <span style={{ fontSize: 14, letterSpacing: '0.07em', color: darkMode ? '#888' : '#bbb', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
+                        <span style={{ fontSize: 14, letterSpacing: '0.07em', color: darkMode ? '#888' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         {colData.map(d => {
                           const { val, pct, bold } = getCell(d)
                           return (
