@@ -13,17 +13,25 @@ May 16, 2026
 
 ## Simulation Strength Calibration
 
-The simulator's LCD force readout is calibrated to the following baseline values, derived from the literature above. Each test draw is seeded from the sample layout, producing reproducible variability within the stated range.
+The simulator's LCD force readout is calibrated to the following baseline values, derived from the literature above.
 
 | Sand % | Mean break strength | Variability |
 |--------|--------------------:|------------:|
 | 0%     | 600 kN              | ±40%        |
 | 20%    | 650 kN              | ±20%        |
 | 40%    | 750 kN              | ±10%        |
-| 60%    | 1000 kN             | ±10%        |
+| 60%    | 900 kN              | ±10%        |
 | 80%    | 400 kN              | ±10%        |
 
 These values are encoded in `SAND_BREAK_KN` and `SAND_BREAK_VAR` in `v4/src/ConcreteViewer.jsx`.
+
+### How the force display value is computed
+
+Each test draw is seeded from the sample's grain layout (`layoutSeed`), which deterministically places grains and bonds. Different seeds produce different fault corridor geometries, and therefore different raw break forces — this is the source of natural variability between draws.
+
+When a sample breaks, the raw internal force at that moment is captured. A z-score maps it into the target display range: the sample's position within the observed internal-force distribution (measured empirically across many seeds per ratio) is preserved, but the distribution is recentered at the target mean and rescaled to the target coefficient of variation. A draw that breaks early relative to its ratio's average will display toward the low end of the spec range; one that holds longer will display toward the high end. The bell-curve shape of the natural grain-layout variability is retained — only the mean and spread are adjusted to match the calibration table above.
+
+During the loading animation (before break), the rising LCD readout uses a fixed linear scale per ratio so the display approaches a plausible value as force increases.
 
 ---
 

@@ -10,14 +10,17 @@ const MANUAL_FORCE_STEP = 20
 const MANUAL_MAX_N = 600   // 30 steps of 20N; break at ~40% happens around 240-360N in practice
 // Mean break strength (kN) and coefficient of variation per sand ratio.
 // Source: Amix Systems (2026); see README for details.
-const SAND_BREAK_KN  = { 0: 600, 20: 650, 40: 750, 60: 1000, 80: 400 }
-const SAND_BREAK_VAR = { 0: 0.40, 20: 0.20, 40: 0.10,  60: 0.10, 80: 0.10 }
+const SAND_BREAK_KN  = { 0: 600, 20: 650, 40: 750, 60: 900, 80: 400 }
+const SAND_BREAK_VAR = { 0: 0.40, 20: 0.20, 40: 0.10, 60: 0.10, 80: 0.10 }
 // Per-mix fault bond break factor — scales how much strain fault bonds tolerate before snapping.
-// Higher value → panel needs more applied force → longer ramp, more bending before failure.
-// Baseline FAULT_BREAK_FACTOR (0.20) gives ~63% of max force at break.
 const SAND_FAULT_BREAK = { 0: 0.200, 20: 0.217, 40: 0.250, 60: 0.333, 80: 0.133 }
-// Nominal internal breakKN at baseline fault factor (0.20 → ~63% of 2500).
-const NOMINAL_BREAK_KN = 1575
+// Observed distribution of raw physics break force (internal kN = dispForce × 2500) per ratio.
+// Derived from runBreakTests with constant fbf (no fbf randomness) and noDiag=true.
+// Used to z-score remap internalKN → target display range at break time.
+const OBSERVED_MEAN_KN = { 0: 1080, 20: 520, 40: 625, 60: 730, 80: 300 }
+const OBSERVED_STD_KN  = { 0: 205,  20: 240, 40: 255, 60: 300, 80: 140 }
+// Empirical LCD scaling for rising animation (before break): internal kN → displayed kN.
+const SAND_KN_SCALE = { 0: 0.552, 20: 1.244, 40: 1.298, 60: 1.182, 80: 1.258 }
 
 function seededRandom(seed) {
   const x = Math.sin(seed * 9301 + 49297) * 233280
@@ -49,6 +52,63 @@ const BAR_SRCS = {
   60: ['/concrete/60Sandbar.png', null],
   80: ['/concrete/80Sandbar.png', null],
 }
+
+// ── Batch break-force diagnostic ──────────────────────────────────────────────
+// Call window.runBreakTests(count=10) from the browser console.
+// Runs physics synchronously for `count` random seeds per sand ratio.
+// Outputs a console.table() of every individual result for histogram analysis,
+// plus a summary line per ratio. Call e.g. runBreakTests(200).
+function runBreakTests(count = 10) {
+  const results = {}
+  const rows    = []
+
+  for (const pct of [0, 20, 40, 60, 80]) {
+    const fbf        = SAND_FAULT_BREAK[pct] ?? FAULT_BREAK_FACTOR
+    const targetMean = SAND_BREAK_KN[pct]    ?? 600
+    const targetCv   = SAND_BREAK_VAR[pct]   ?? 0.10
+    const obsMean    = OBSERVED_MEAN_KN[pct]  ?? 1000
+    const obsStd     = OBSERVED_STD_KN[pct]   ?? 200
+
+    const displays = []
+    for (let i = 0; i < count; i++) {
+      const seed      = Math.round(Math.random() * 1e6)
+      const layoutFbf = pct === 0
+        ? fbf * (1 + (seededRandom(seed) * 2 - 1) * SAND_BREAK_VAR[0])
+        : fbf
+
+      const grains   = buildGrains(pct, seed * 7919 + pct * 137 + 42)
+      const ions     = buildIons(grains)
+      const lattices = grains.map(buildLattice)
+      const phys     = buildPhysics(ions, grains, lattices, 1, true, null, layoutFbf)
+
+      let dispForce  = 0
+      let breakForce = null
+      for (let frame = 0; frame < 1000; frame++) {
+        dispForce = Math.min(1.0, dispForce + 0.004)
+        stepPhysics(phys, dispForce, 1, true)
+        if (phys.bonds.some(b => b.broken)) { breakForce = dispForce; break }
+      }
+
+      if (breakForce != null) {
+        const internalKN  = breakForce * 2500
+        const z           = Math.tanh((internalKN - obsMean) / obsStd)
+        const displayKN   = Math.max(1, Math.round(targetMean * (1 + z * targetCv)))
+        displays.push(displayKN)
+        rows.push({ sand: `${pct}%`, seed, displayKN, internalKN: Math.round(internalKN), z: +z.toFixed(3) })
+      }
+    }
+
+    const avg  = displays.length ? Math.round(displays.reduce((a, b) => a + b) / displays.length) : null
+    const minD = displays.length ? Math.min(...displays) : null
+    const maxD = displays.length ? Math.max(...displays) : null
+    console.log(`${pct}%: range ${minD}–${maxD} kN  avg=${avg}  target=${targetMean}`)
+    results[pct] = { avg, minD, maxD, target: targetMean }
+  }
+
+  console.table(rows)
+  return results
+}
+if (typeof window !== 'undefined') window.runBreakTests = runBreakTests
 
 // Renders bar image with a quadratic downward bend. Optionally blends a second
 // image at 50% opacity for intermediate sand percentages.
@@ -872,7 +932,15 @@ export default function ConcreteViewer() {
   function handleFailed(kn)  {
     if (breakFiredRef.current) return
     breakFiredRef.current = true
-    setPhase('failed'); setBreakKN(kn ?? null)
+    let displayKN = null
+    if (kn != null) {
+      const z        = Math.tanh((kn - (OBSERVED_MEAN_KN[sandPct] ?? 1000)) / (OBSERVED_STD_KN[sandPct] ?? 200))
+      const targetMean = SAND_BREAK_KN[sandPct] ?? 600
+      const targetCv   = SAND_BREAK_VAR[sandPct] ?? 0.10
+      displayKN = Math.max(1, Math.round(targetMean * (1 + z * targetCv)))
+      console.log(`[BREAK] sandPct=${sandPct}  internalKN=${kn}  z=${z.toFixed(3)}  displayKN=${displayKN}  target=${targetMean}±${(targetCv*100).toFixed(0)}%`)
+    }
+    setPhase('failed'); setBreakKN(displayKN)
   }
   function handleSettled() { setPhase('settled') }
 
@@ -1025,6 +1093,15 @@ export default function ConcreteViewer() {
   // Effective bend anim: 1.0 in manual mode (force directly controls bend), else scrub or ramp
   const effectiveBendAnim = isManual ? 1.0 : (photoView === 'off' && hasRecording ? scrubT : bendAnim)
 
+  // Manual mode: z-score remap of the pre-computed break force into target display range
+  const manualDisplayBreakKN = useMemo(() => {
+    if (manualBreakN == null) return null
+    const internalKN = (manualBreakN / MANUAL_MAX_N) * 2500
+    const z = Math.tanh((internalKN - (OBSERVED_MEAN_KN[sandPct] ?? 1000)) / (OBSERVED_STD_KN[sandPct] ?? 200))
+    const targetMean = SAND_BREAK_KN[sandPct] ?? 600
+    return Math.max(1, Math.round(targetMean * (1 + z * (SAND_BREAK_VAR[sandPct] ?? 0.10))))
+  }, [manualBreakN, sandPct])
+
   // Force shown in LCD during scrub: linearly interpolated across p1 portion of recording
   const scrubDisplayKN = (() => {
     if (phase !== 'failed' || breakKN == null || !hasRecording || p2StartFrac == null) return null
@@ -1032,20 +1109,18 @@ export default function ConcreteViewer() {
     return scrubT / p2StartFrac * breakKN
   })()
 
-  // Variability lives in the physics: per-layout faultBreakFactor scales actual break force.
-  // kNScale is a fixed unit conversion (mean_kN / nominal_internal_break), no randomness.
+  // 0% sand has almost no grain-layout variability (no sand grains), so fbf randomness
+  // is restored for that ratio. All other ratios use constant fbf; grain layout provides variability.
   const effectiveFaultBreakFactor = useMemo(() => {
     const base = SAND_FAULT_BREAK[sandPct] ?? FAULT_BREAK_FACTOR
-    const cv   = SAND_BREAK_VAR[sandPct]  ?? 0.10
-    const r    = seededRandom(layoutSeed)
-    return base * (1 + (r * 2 - 1) * cv)
+    if (sandPct === 0) {
+      const r = seededRandom(layoutSeed)
+      return base * (1 + (r * 2 - 1) * SAND_BREAK_VAR[0])
+    }
+    return base
   }, [sandPct, layoutSeed])
 
-  const kNScale = useMemo(() => {
-    const mean        = SAND_BREAK_KN[sandPct] ?? 600
-    const nominalBreak = NOMINAL_BREAK_KN * (SAND_FAULT_BREAK[sandPct] ?? FAULT_BREAK_FACTOR) / FAULT_BREAK_FACTOR
-    return mean / nominalBreak
-  }, [sandPct])
+  const kNScale = SAND_KN_SCALE[sandPct] ?? 0.381
 
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
@@ -1141,8 +1216,9 @@ export default function ConcreteViewer() {
               <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
                 <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
                 <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)}</span>
+                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{scrubDisplayKN != null ? scrubDisplayKN : Math.round(liveDispForce * 2500 * kNScale)}</span>
               </div>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
               <div className="toolbar-divider" />
               {photoView === 'off' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -1161,7 +1237,7 @@ export default function ConcreteViewer() {
               <div className="toolbar-divider" />
               {/* Right: theme toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020' }}>{darkMode ? '☽' : '☀'}</span>
+                <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020', display: 'inline-block', width: 18, textAlign: 'center' }}>{darkMode ? '☽' : '☀'}</span>
                 <div
                   onClick={() => setDarkMode(f => !f)}
                   style={{
@@ -1213,33 +1289,36 @@ export default function ConcreteViewer() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <button
                   className="action-btn replay-btn"
+                  style={{ padding: '3px 9px' }}
                   onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
                   disabled={manualForceN === 0 || manualInP2}
-                ><span style={{ position: 'relative', top: 3 }}><span style={{ fontSize: '2em', lineHeight: 0 }}>−</span> 20</span></button>
+                ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>−</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
                 <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
                   <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
                   <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{manualForceN}</span>
+                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{manualInP2 && manualDisplayBreakKN != null ? manualDisplayBreakKN : Math.round((manualForceN / MANUAL_MAX_N) * 2500 * kNScale)}</span>
                 </div>
+                <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
                 <button
                   className="action-btn test-btn"
+                  style={{ padding: '3px 9px' }}
                   onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + MANUAL_FORCE_STEP))}
                   disabled={manualInP2}
-                ><span style={{ position: 'relative', top: 3 }}><span style={{ fontSize: '2em', lineHeight: 0 }}>+</span> 20</span></button>
+                ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>+</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
               </div>
               <div className="toolbar-divider" />
               {/* Show/Hide Visuals */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)', fontSize: 13 }}>Show/Hide Visuals</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
-                  <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
-                  <button className={`action-btn replay-btn${showField ? ' active' : ''}`} onClick={() => setShowField(f => !f)}>Field</button>
+                  <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} style={{ padding: '3px 13px' }} onClick={() => setShowCount(f => !f)}>Count</button>
+                  <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} style={{ padding: '3px 13px' }} onClick={() => setChargeVisible(f => !f)}>Charge</button>
+                  <button className={`action-btn replay-btn${showField ? ' active' : ''}`} style={{ padding: '3px 13px' }} onClick={() => setShowField(f => !f)}>Field</button>
                 </div>
               </div>
               <div className="toolbar-divider" />
               {/* Theme toggle */}
-              <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020' }}>{darkMode ? '☽' : '☀'}</span>
+              <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020', display: 'inline-block', width: 18, textAlign: 'center' }}>{darkMode ? '☽' : '☀'}</span>
               <div
                 onClick={() => setDarkMode(f => !f)}
                 style={{
@@ -1294,7 +1373,7 @@ export default function ConcreteViewer() {
               scrubElapsed={scrubElapsed}
               pusherX={pusherX} pusherY={pusherY + pusherDropPct} pusherNudgePct={-0.5}
               pusherSize={pusherSize}
-              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)} containerW={miniPhotoW} lcdNudge={{ dx: 0, dy: -1 }}
+              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={scrubDisplayKN != null ? scrubDisplayKN : Math.round(liveDispForce * 2500 * kNScale)} containerW={miniPhotoW} lcdNudge={{ dx: 0, dy: -1 }}
               showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
               photoViewIsZooming={photoView === 'zooming'}
               photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
@@ -1644,7 +1723,7 @@ export default function ConcreteViewer() {
                 scrubElapsed={scrubElapsed}
                 pusherX={pusherX} pusherY={pusherY + pusherDropPct}
                 pusherSize={pusherSize}
-                lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={Math.round((scrubDisplayKN ?? liveDispForce * 2500) * kNScale)} containerW={zoomLayerW}
+                lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={scrubDisplayKN != null ? scrubDisplayKN : Math.round(liveDispForce * 2500 * kNScale)} containerW={zoomLayerW}
                 showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
                 photoViewIsZooming={photoView === 'zooming'}
                 photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
