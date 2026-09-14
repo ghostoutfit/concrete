@@ -1322,7 +1322,7 @@ export default function ConcreteViewer() {
             })()}
             {/* Bond strain key */}
             {showField && (
-              <svg viewBox="0 0 200 110" width="100%" style={{ display: 'block', flexShrink: 0 }}>
+              <svg viewBox="0 0 200 50" width="100%" style={{ display: 'block', flexShrink: 0 }}>
                 <defs>
                   <linearGradient id="cv-strain-grad" x1="0" x2="1" y1="0" y2="0">
                     {darkMode ? (<>
@@ -1338,10 +1338,10 @@ export default function ConcreteViewer() {
                     </>)}
                   </linearGradient>
                 </defs>
-                <text x="0" y="28" style={{ fontSize: '28px', fill: darkMode ? '#999' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }}>Energy in fields:</text>
-                <rect x="0" y="36" width="200" height="22" fill="url(#cv-strain-grad)" rx="1" />
-                <text x="0"   y="100" style={{ fontSize: '32px', fill: darkMode ? '#666' : '#888', fontFamily: 'Lexend, system-ui, sans-serif' }}>Low</text>
-                <text x="200" y="100" style={{ fontSize: '32px', fill: darkMode ? '#666' : '#888', fontFamily: 'Lexend, system-ui, sans-serif', textAnchor: 'end' }}>High</text>
+                <text x="0" y="14" style={{ fontSize: '14px', fill: darkMode ? '#999' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }}>Energy in fields:</text>
+                <rect x="0" y="18" width="200" height="10" fill="url(#cv-strain-grad)" rx="1" />
+                <text x="0"   y="44" style={{ fontSize: '16px', fill: darkMode ? '#666' : '#888', fontFamily: 'Lexend, system-ui, sans-serif' }}>Low</text>
+                <text x="200" y="44" style={{ fontSize: '16px', fill: darkMode ? '#666' : '#888', fontFamily: 'Lexend, system-ui, sans-serif', textAnchor: 'end' }}>High</text>
               </svg>
             )}
             {showCount && <div className="bond-analysis-box">
