@@ -1403,26 +1403,26 @@ export default function ConcreteViewer() {
                       {colData.map(({ key, label, color, icon }) => (
                         <div key={key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
                           {icon}
-                          <span style={{ fontSize: 8, color, letterSpacing: '0.04em', lineHeight: 1, textAlign: 'center', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
+                          <span style={{ fontSize: 14, color, letterSpacing: '0.04em', lineHeight: 1, textAlign: 'center', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         </div>
                       ))}
                     </div>
                     {/* Value rows */}
                     {valueRows.map(({ key, label, getCell }) => (
                       <div key={key} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 1fr 1fr', gap: '0', alignItems: 'baseline', marginBottom: 3 }}>
-                        <span style={{ fontSize: 8, letterSpacing: '0.07em', color: darkMode ? '#666' : '#888', textTransform: 'uppercase', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
+                        <span style={{ fontSize: 14, letterSpacing: '0.07em', color: darkMode ? '#666' : '#888', textTransform: 'uppercase', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
                         {colData.map(d => {
                           const { val, pct, bold } = getCell(d)
                           return (
                             <div key={d.key} style={{ textAlign: 'center' }}>
                               {val != null && (
-                                <div style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500, lineHeight: 1.1, fontFamily: 'Lexend, system-ui, sans-serif' }}>{val}</div>
+                                <div style={{ fontSize: 23, fontVariantNumeric: 'tabular-nums', color: d.color, fontWeight: bold ? 700 : 500, lineHeight: 1.1, fontFamily: 'Lexend, system-ui, sans-serif' }}>{val}</div>
                               )}
                               {pct != null && (
-                                <div style={{ fontSize: 10, color: d.color, opacity: 0.75, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, fontFamily: 'Lexend, system-ui, sans-serif' }}>{Math.round(pct)}%</div>
+                                <div style={{ fontSize: 18, color: d.color, opacity: 0.75, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, fontFamily: 'Lexend, system-ui, sans-serif' }}>{Math.round(pct)}%</div>
                               )}
                               {val == null && pct == null && (
-                                <span style={{ fontSize: 12, color: darkMode ? '#333' : '#bbb', fontFamily: 'Lexend, system-ui, sans-serif' }}>—</span>
+                                <span style={{ fontSize: 22, color: darkMode ? '#333' : '#bbb', fontFamily: 'Lexend, system-ui, sans-serif' }}>—</span>
                               )}
                             </div>
                           )
