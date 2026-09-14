@@ -1094,13 +1094,13 @@ export default function ConcreteViewer() {
               onClick={() => startReplay(0.25)}
               disabled={!activeHasRecording}
               style={{ flexShrink: 0, transform: 'translateX(-30px)' }}
-            ><img src="/concrete/Turtle.png" draggable={false} style={{ height: '1.5em', verticalAlign: 'middle', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '2em', color: '#90c8f0', lineHeight: 1, verticalAlign: 'middle' }}>↺</span></button>
+            ><img src="/concrete/Turtle.png" draggable={false} style={{ height: '1.5em', verticalAlign: 'middle', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '1.4em', color: '#90c8f0', lineHeight: 1, verticalAlign: 'middle' }}>↺</span></button>
             <button
               className="action-btn test-btn"
               onClick={() => startReplay(1)}
               disabled={!activeHasRecording}
               style={{ flexShrink: 0, transform: 'translateX(-20px)' }}
-            ><img src="/concrete/Rabbit.png" draggable={false} style={{ height: '1.5em', verticalAlign: 'middle', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '2em', color: '#90c8f0', lineHeight: 1, verticalAlign: 'middle' }}>↺</span></button>
+            ><img src="/concrete/Rabbit.png" draggable={false} style={{ height: '1.5em', verticalAlign: 'middle', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '1.4em', color: '#90c8f0', lineHeight: 1, verticalAlign: 'middle' }}>↺</span></button>
           </div>
           {/* Tab strip */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginBottom: 5 }}>
