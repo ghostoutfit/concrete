@@ -106,6 +106,7 @@ function runBreakTests(count = 10) {
   }
 
   console.table(rows)
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('breakTestData', { detail: rows }))
   return results
 }
 if (typeof window !== 'undefined') window.runBreakTests = runBreakTests
@@ -590,6 +591,8 @@ export default function ConcreteViewer() {
 
   // Test scrub: checkbox shows/hides the replay slider
   const [showDevSliders, setShowDevSliders] = useState(false)
+  const [histRows,    setHistRows]    = useState(null)
+  const [histSandPct, setHistSandPct] = useState(0)
   const [zoomScrubT,  setZoomScrubT]  = useState(0)
   const [breakKN, setBreakKN] = useState(null)
   const [liveDispForce, setLiveDispForce] = useState(0)
@@ -743,6 +746,12 @@ export default function ConcreteViewer() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    const handler = e => setHistRows(e.detail)
+    window.addEventListener('breakTestData', handler)
+    return () => window.removeEventListener('breakTestData', handler)
   }, [])
 
   useEffect(() => {
@@ -1745,6 +1754,86 @@ export default function ConcreteViewer() {
           </div>
         )}
       </main>
+
+      {/* ── Histogram overlay (dev mode + runBreakTests data) ───────────── */}
+      {showDevSliders && histRows && (() => {
+        const W = 520, H = 280, ML = 44, MR = 16, MT = 24, MB = 36
+        const iW = W - ML - MR, iH = H - MT - MB
+        const values = histRows.filter(r => r.sand === `${histSandPct}%`).map(r => r.displayKN)
+        if (!values.length) return null
+        const avg    = values.reduce((a, b) => a + b, 0) / values.length
+        const minV   = Math.min(...values), maxV = Math.max(...values)
+        const binMin = Math.floor(minV / 100) * 100
+        const binMax = Math.ceil((maxV + 1) / 100) * 100
+        const bins   = []
+        for (let b = binMin; b < binMax; b += 100)
+          bins.push({ lo: b, hi: b + 100, n: values.filter(v => v >= b && v < b + 100).length })
+        const maxN   = Math.max(...bins.map(b => b.n), 1)
+        const xScale = iW / (binMax - binMin)
+        const yScale = iH / maxN
+        const xOf    = v => ML + (v - binMin) * xScale
+        const yOf    = n => MT + iH - n * yScale
+        const avgX   = xOf(avg)
+        const yTicks = Array.from({ length: maxN + 1 }, (_, i) => i).filter(i => i % Math.ceil(maxN / 5) === 0 || i === maxN)
+        const xTicks = bins.map(b => b.lo).concat(binMax)
+        return (
+          <div style={{
+            position: 'fixed', top: 60, right: 24, zIndex: 9999,
+            background: 'rgba(18,22,18,0.96)', border: '1px solid rgba(120,180,80,0.3)',
+            borderRadius: 8, padding: '12px 16px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+            fontFamily: 'Lexend, system-ui, sans-serif', color: '#ccc',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 16 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#8ab868' }}>Break Force Distribution</span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {SAND_PRESETS.map(pct => (
+                  <button key={pct} onClick={() => setHistSandPct(pct)} style={{
+                    padding: '2px 8px', borderRadius: 3, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    background: histSandPct === pct ? '#4a7a30' : 'rgba(255,255,255,0.07)',
+                    border: histSandPct === pct ? '1px solid #6aaa40' : '1px solid rgba(255,255,255,0.15)',
+                    color: histSandPct === pct ? '#c8f0a0' : '#888',
+                  }}>{pct}%</button>
+                ))}
+              </div>
+            </div>
+            <svg width={W} height={H}>
+              {/* y gridlines + labels */}
+              {yTicks.map(n => (
+                <g key={n}>
+                  <line x1={ML} x2={ML + iW} y1={yOf(n)} y2={yOf(n)} stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
+                  <text x={ML - 5} y={yOf(n) + 4} textAnchor="end" fontSize={9} fill="#666">{n}</text>
+                </g>
+              ))}
+              {/* bars */}
+              {bins.map(b => (
+                <rect key={b.lo}
+                  x={xOf(b.lo) + 1} y={yOf(b.n)}
+                  width={Math.max(0, b.hi === binMax ? iW - (xOf(b.lo) - ML) - 1 : xScale - 2)}
+                  height={b.n * yScale}
+                  fill="rgba(100,180,60,0.55)" stroke="rgba(120,200,70,0.8)" strokeWidth={1}
+                />
+              ))}
+              {/* x axis */}
+              <line x1={ML} x2={ML + iW} y1={MT + iH} y2={MT + iH} stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
+              {xTicks.map(v => (
+                <g key={v}>
+                  <line x1={xOf(v)} x2={xOf(v)} y1={MT + iH} y2={MT + iH + 4} stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
+                  <text x={xOf(v)} y={MT + iH + 14} textAnchor="middle" fontSize={9} fill="#666">{v}</text>
+                </g>
+              ))}
+              {/* x axis label */}
+              <text x={ML + iW / 2} y={H - 2} textAnchor="middle" fontSize={9} fill="#555">kN</text>
+              {/* y axis label */}
+              <text x={10} y={MT + iH / 2} textAnchor="middle" fontSize={9} fill="#555" transform={`rotate(-90,10,${MT + iH / 2})`}>count</text>
+              {/* average line */}
+              <line x1={avgX} x2={avgX} y1={MT} y2={MT + iH} stroke="#f0c040" strokeWidth={1.5} strokeDasharray="4 3" />
+              <text x={avgX + 4} y={MT + 11} fontSize={10} fill="#f0c040">avg {Math.round(avg)} kN</text>
+              {/* n label */}
+              <text x={ML + iW} y={MT + 11} textAnchor="end" fontSize={9} fill="#555">n={values.length}</text>
+            </svg>
+          </div>
+        )
+      })()}
     </div>
   )
 }
