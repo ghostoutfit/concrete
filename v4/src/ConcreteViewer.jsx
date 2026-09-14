@@ -1161,16 +1161,28 @@ export default function ConcreteViewer() {
               <div className="toolbar-divider" />
               {/* Right: theme toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  className={`action-btn replay-btn${!darkMode ? ' active' : ''}`}
+                <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none' }}>{darkMode ? '☽' : '☀'}</span>
+                <div
                   onClick={() => setDarkMode(f => !f)}
                   style={{
-                    fontSize: 18, padding: '3px 9px 4px', lineHeight: 1,
-                    textShadow: darkMode
-                      ? '0 0 8px rgba(180,210,255,0.95), 0 0 18px rgba(120,170,255,0.6)'
-                      : '0 0 8px rgba(255,220,50,0.95), 0 0 18px rgba(255,160,0,0.65)',
+                    width: 36, height: 20, borderRadius: 10, cursor: 'pointer',
+                    background: darkMode ? 'rgba(140,180,255,0.25)' : 'rgba(255,200,40,0.35)',
+                    border: darkMode ? '1px solid rgba(140,180,255,0.4)' : '1px solid rgba(200,150,20,0.45)',
+                    position: 'relative', transition: 'background 0.2s, border-color 0.2s',
+                    flexShrink: 0,
                   }}
-                >{darkMode ? '☽' : '☀'}</button>
+                >
+                  <div style={{
+                    width: 14, height: 14, borderRadius: 7,
+                    background: darkMode ? '#a0c0ff' : '#ffc020',
+                    position: 'absolute', top: 2,
+                    left: darkMode ? 2 : 18,
+                    transition: 'left 0.2s, background 0.2s',
+                    boxShadow: darkMode
+                      ? '0 0 6px rgba(160,200,255,0.9)'
+                      : '0 0 6px rgba(255,180,0,0.9)',
+                  }} />
+                </div>
               </div>
             </div>
           ) : !manualRecording ? (
@@ -1227,11 +1239,28 @@ export default function ConcreteViewer() {
               </div>
               <div className="toolbar-divider" />
               {/* Theme toggle */}
-              <button
-                className={`action-btn replay-btn${!darkMode ? ' active' : ''}`}
+              <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none' }}>{darkMode ? '☽' : '☀'}</span>
+              <div
                 onClick={() => setDarkMode(f => !f)}
-                style={{ fontSize: 18, padding: '3px 9px 4px', lineHeight: 1, textShadow: darkMode ? '0 0 8px rgba(180,210,255,0.95), 0 0 18px rgba(120,170,255,0.6)' : '0 0 8px rgba(255,220,50,0.95), 0 0 18px rgba(255,160,0,0.65)' }}
-              >{darkMode ? '☽' : '☀'}</button>
+                style={{
+                  width: 36, height: 20, borderRadius: 10, cursor: 'pointer',
+                  background: darkMode ? 'rgba(140,180,255,0.25)' : 'rgba(255,200,40,0.35)',
+                  border: darkMode ? '1px solid rgba(140,180,255,0.4)' : '1px solid rgba(200,150,20,0.45)',
+                  position: 'relative', transition: 'background 0.2s, border-color 0.2s',
+                  flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  width: 14, height: 14, borderRadius: 7,
+                  background: darkMode ? '#a0c0ff' : '#ffc020',
+                  position: 'absolute', top: 2,
+                  left: darkMode ? 2 : 18,
+                  transition: 'left 0.2s, background 0.2s',
+                  boxShadow: darkMode
+                    ? '0 0 6px rgba(160,200,255,0.9)'
+                    : '0 0 6px rgba(255,180,0,0.9)',
+                }} />
+              </div>
             </div>
           )}
 
