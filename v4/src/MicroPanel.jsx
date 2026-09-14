@@ -1004,11 +1004,11 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
     if (showCharge) {
       const q = particleCharge(p)
       const rgb = q > 0 ? CHARGE_POS : CHARGE_NEG
-      const alpha = 0.26 + (Math.abs(q) / 2) * 0.19
       const cr = 8
       const grad = ctx.createRadialGradient(px, py, 0, px, py, cr)
-      grad.addColorStop(0, `rgba(${rgb},${alpha.toFixed(3)})`)
-      grad.addColorStop(1, `rgba(${rgb},0)`)
+      grad.addColorStop(0,     `rgba(${rgb},1.0)`)
+      grad.addColorStop(3/cr,  `rgba(${rgb},1.0)`)
+      grad.addColorStop(1,     `rgba(${rgb},0)`)
       ctx.beginPath()
       ctx.arc(px, py, cr, 0, Math.PI * 2)
       ctx.fillStyle = grad
@@ -1214,11 +1214,11 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     if (showCharge) {
       const q = particleCharge(p)
       const rgb = q > 0 ? CHARGE_POS : CHARGE_NEG
-      const alpha = 0.26 + (Math.abs(q) / 2) * 0.19
       const cr = 8
       const grad = ctx.createRadialGradient(px, py, 0, px, py, cr)
-      grad.addColorStop(0, `rgba(${rgb},${alpha.toFixed(3)})`)
-      grad.addColorStop(1, `rgba(${rgb},0)`)
+      grad.addColorStop(0,     `rgba(${rgb},1.0)`)
+      grad.addColorStop(3/cr,  `rgba(${rgb},1.0)`)
+      grad.addColorStop(1,     `rgba(${rgb},0)`)
       ctx.beginPath()
       ctx.arc(px, py, cr, 0, Math.PI * 2)
       ctx.fillStyle = grad
@@ -1372,11 +1372,11 @@ export function BondIcon({ particles, bonds, scale = 1.5, darkMode = true, showC
       if (showCharge) {
         const q = p.type === 'Ca' ? 2 : p.type === 'Si' ? 0.5 : (p.isGrain ? -0.5 : -1)
         const rgb = q > 0 ? CHARGE_POS : CHARGE_NEG
-        const alpha = 0.26 + (Math.abs(q) / 2) * 0.19
         const cr = p.r * 2
         const cGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, cr)
-        cGrad.addColorStop(0, `rgba(${rgb},${alpha.toFixed(3)})`)
-        cGrad.addColorStop(1, `rgba(${rgb},0)`)
+        cGrad.addColorStop(0,     `rgba(${rgb},1.0)`)
+        cGrad.addColorStop(3/cr,  `rgba(${rgb},1.0)`)
+        cGrad.addColorStop(1,     `rgba(${rgb},0)`)
         ctx.beginPath()
         ctx.arc(p.x, p.y, cr, 0, Math.PI * 2)
         ctx.fillStyle = cGrad
