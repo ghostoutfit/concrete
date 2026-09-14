@@ -492,9 +492,6 @@ body {
 .bond-analysis-box {
   flex: 1;
   min-height: 0;
-  border: 1px solid #1a1a1a;
-  border-radius: 4px;
-  background: #0c0c0c;
 }
 
 .micro-square {
@@ -734,10 +731,6 @@ body[data-theme='light'] .force-viz-space {
   background: transparent;
 }
 
-body[data-theme='light'] .bond-analysis-box {
-  background: #ddd8cf;
-  border-color: #ccc7be;
-}
 
 body[data-theme='light'] .scrub-bar {
   background: #ccc7be;
