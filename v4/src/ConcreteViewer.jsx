@@ -1107,7 +1107,7 @@ export default function ConcreteViewer() {
             <button
               className={`tab-btn ${controlTab === 'ratio' ? 'active' : ''}`}
               onClick={() => setControlTab('ratio')}
-            >Sand:Cement Ratio</button>
+            >Break Test</button>
             <button
               className={`tab-btn ${controlTab === 'manual' ? 'active' : ''}`}
               onClick={() => { setControlTab('manual'); setManualForceN(0); if (photoView !== 'off') cancelZoom() }}
