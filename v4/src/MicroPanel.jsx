@@ -944,13 +944,22 @@ function drawScene(canvas, phys, crackFraction, crackWaypoints, ts = 0, showDiag
   ctx.fillStyle = darkMode ? C.bg : '#ede8df'
   ctx.fillRect(0, 0, VW, VH)
 
-  const { particles, bonds, matrixCount } = phys
+  const { particles, bonds, matrixCount, grains } = phys
 
   const t = ts / 1000
 
   // Visual position: amplify displacement from rest for educational clarity
   const vx = p => p.x0 + (p.x - p.x0) * visualScale
   const vy = p => p.y0 + (p.y - p.y0) * visualScale
+
+  // ── Goldenrod outlines around sand grains, behind bonds ──
+  if (grains?.length > 0) {
+    ctx.save()
+    ctx.strokeStyle = 'rgba(218,165,32,0.60)'
+    ctx.lineWidth = 1.0
+    for (const g of grains) ctx.strokeRect(g.x, g.y, g.w, g.h)
+    ctx.restore()
+  }
 
   // ── Bonds: draw field lenses to offscreen layer, composite with one blur ──
   if (showField) {
@@ -1124,6 +1133,14 @@ function drawPhase2Scene(canvas, phys, p2Progress, ts, showDiag, bondRound = 1.6
     xs[i] = particles[i].x0 + p2disp[i] * eased
   }
 
+  // ── Goldenrod outlines around sand grains, behind bonds ──
+  if (grains?.length > 0) {
+    ctx.save()
+    ctx.strokeStyle = 'rgba(218,165,32,0.60)'
+    ctx.lineWidth = 1.0
+    for (const g of grains) ctx.strokeRect(g.x, g.y, g.w, g.h)
+    ctx.restore()
+  }
 
   // ── Bonds ── (skip bonds that span the crack — one end shifted, other not)
   if (showField) {
