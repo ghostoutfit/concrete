@@ -495,8 +495,10 @@ function PhotoScene({
             return [
               ...(strand.fromTop ? [
                 <path key={`${si}-cap`} d={strandToCapD(strand)}
-                  fill="none" stroke="#1a1008" strokeWidth={0.3 * wm} strokeLinecap="butt" />,
-                <path key={`${si}-captip`} d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none" />,
+                  fill="none" stroke="#1a1008" strokeWidth={0.3 * wm} strokeLinecap="butt"
+                  style={{ opacity: scrubElapsed != null && scrubElapsed <= strand.delayMs ? 0 : 1 }} />,
+                <path key={`${si}-captip`} d={strandToCapTipD(strand, wm)} fill="#f5f0e8" stroke="none"
+                  style={{ opacity: scrubElapsed != null && scrubElapsed <= strand.delayMs ? 0 : 1 }} />,
               ] : []),
               ...photoPts.slice(0, -1).map(([px0, py0], i) => {
                 const [px1, py1] = photoPts[i + 1]
