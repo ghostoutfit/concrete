@@ -17,8 +17,8 @@ const SAND_FAULT_BREAK = { 0: 0.200, 20: 0.217, 40: 0.250, 60: 0.333, 80: 0.133 
 // Observed distribution of raw physics break force (internal kN = dispForce × 2500) per ratio.
 // Derived from runBreakTests with constant fbf (no fbf randomness) and noDiag=true.
 // Used to z-score remap internalKN → target display range at break time.
-const OBSERVED_MEAN_KN = { 0: 1080, 20: 520, 40: 625, 60: 730, 80: 300 }
-const OBSERVED_STD_KN  = { 0: 205,  20: 240, 40: 255, 60: 300, 80: 140 }
+const OBSERVED_MEAN_KN = { 0: 883, 20: 340, 40: 294, 60: 353, 80: 120 }
+const OBSERVED_STD_KN  = { 0: 192, 20: 109, 40:  69, 60: 110, 80: 140 }
 // Empirical LCD scaling for rising animation (before break): internal kN → displayed kN.
 const SAND_KN_SCALE = { 0: 0.552, 20: 1.244, 40: 1.298, 60: 1.182, 80: 1.258 }
 
@@ -110,6 +110,80 @@ function runBreakTests(count = 10) {
   return results
 }
 if (typeof window !== 'undefined') window.runBreakTests = runBreakTests
+
+// Simulates exactly what the manual mode LCD shows at break, in bulk.
+// Runs the same pre-run + coarse recording loop the recording build uses,
+// and reports the LCD value at foundBreakN — the number the user actually sees.
+function runManualTests(count = 10) {
+  const WIDTH_MULS = { 0: 2.23 * 1.5, 20: 1.8 * 1.5, 40: 1.6 * 1.5, 60: 0.7 * 1.5, 80: 6.0 * 1.5 }
+  const rows = []
+
+  for (const pct of [0, 20, 40, 60, 80]) {
+    const fbf        = SAND_FAULT_BREAK[pct] ?? FAULT_BREAK_FACTOR
+    const targetMean = SAND_BREAK_KN[pct]    ?? 600
+    const targetCv   = SAND_BREAK_VAR[pct]   ?? 0.10
+    const obsMean    = OBSERVED_MEAN_KN[pct]  ?? 1000
+    const obsStd     = OBSERVED_STD_KN[pct]   ?? 200
+    const widthMul   = WIDTH_MULS[pct] ?? 2.4
+
+    const displays = []
+    const internals = []
+    for (let i = 0; i < count; i++) {
+      const seed      = Math.round(Math.random() * 1e6)
+      const manualFbf = pct === 0
+        ? fbf * (1 + (seededRandom(seed) * 2 - 1) * SAND_BREAK_VAR[0])
+        : fbf
+
+      const grains   = buildGrains(pct, seed * 7919 + pct * 137 + 42)
+      const ions     = buildIons(grains)
+      const lattices = grains.map(buildLattice)
+
+      // Step 1: fine pre-run (all ratios), same as recording build
+      const physPre = buildPhysics(ions, grains, lattices, widthMul, false, null, manualFbf)
+      let preBreakN = null
+      for (let n = 1; n <= MANUAL_MAX_N; n++) {
+        const f = n / MANUAL_MAX_N
+        physPre.currentDisp = f * MAX_PUNCH_DISP
+        stepPhysics(physPre, f, 1, true)
+        if (physPre.bonds.some(b => b.broken)) { preBreakN = n; break }
+      }
+      if (preBreakN == null) continue
+
+      const internalKN      = (preBreakN / MANUAL_MAX_N) * 2500
+      const z               = Math.tanh((internalKN - obsMean) / obsStd)
+      const targetDisplayKN = Math.max(1, targetMean * (1 + z * targetCv))
+      const effectiveScale  = targetDisplayKN * MANUAL_MAX_N / (2500 * preBreakN)
+
+      // Step 2: coarse recording loop (same step size as button presses)
+      const phys       = buildPhysics(ions, grains, lattices, widthMul, false, null, manualFbf)
+      const manualStep = 20 * MANUAL_MAX_N / (2500 * effectiveScale)
+      let foundBreakN  = null
+      for (let n = 0; n <= MANUAL_MAX_N; n += manualStep) {
+        const f = n / MANUAL_MAX_N
+        phys.currentDisp = f * MAX_PUNCH_DISP
+        stepPhysics(phys, f, 1, true)
+        if (foundBreakN === null && phys.bonds.some(b => b.broken)) { foundBreakN = n; break }
+      }
+      if (foundBreakN == null) continue
+
+      displays.push(Math.round((foundBreakN / MANUAL_MAX_N) * 2500 * effectiveScale))
+      internals.push(Math.round(internalKN))
+    }
+
+    const avg   = displays.length ? Math.round(displays.reduce((a, b) => a + b) / displays.length) : null
+    const minD  = displays.length ? Math.min(...displays) : null
+    const maxD  = displays.length ? Math.max(...displays) : null
+    const iMean = internals.length ? Math.round(internals.reduce((a, b) => a + b) / internals.length) : null
+    const iStd  = internals.length > 1
+      ? Math.round(Math.sqrt(internals.map(v => (v - iMean) ** 2).reduce((a, b) => a + b) / (internals.length - 1)))
+      : null
+    rows.push({ 'sand%': `${pct}%`, min: minD, avg, max: maxD, target: targetMean, 'spec range': `${Math.round(targetMean*(1-targetCv))}–${Math.round(targetMean*(1+targetCv))}`, 'iKN mean': iMean, 'iKN std': iStd, 'const mean': obsMean })
+  }
+
+  console.table(rows)
+  return rows
+}
+if (typeof window !== 'undefined') window.runManualTests = runManualTests
 
 // Renders bar image with a quadratic downward bend. Optionally blends a second
 // image at 50% opacity for intermediate sand percentages.
@@ -591,8 +665,9 @@ export default function ConcreteViewer() {
 
   // Test scrub: checkbox shows/hides the replay slider
   const [showDevSliders, setShowDevSliders] = useState(false)
-  const [histRows,    setHistRows]    = useState(null)
-  const [histSandPct, setHistSandPct] = useState(0)
+  const [histRows,           setHistRows]           = useState(null)
+  const [histSandPct,        setHistSandPct]        = useState(0)
+  const [manualEffectiveScale, setManualEffectiveScale] = useState(null)
   const [zoomScrubT,  setZoomScrubT]  = useState(0)
   const [breakKN, setBreakKN] = useState(null)
   const [liveDispForce, setLiveDispForce] = useState(0)
@@ -795,25 +870,50 @@ export default function ConcreteViewer() {
 
   // Build manual-tab preload: run physics at each 20N step, snapshot, no live loop needed
   useEffect(() => {
-    if (controlTab !== 'manual') return
+    if (controlTab !== 'manual') { setManualEffectiveScale(null); return }
     setManualRecording(null)
     setManualBreakN(null)
-    if (controlTab === 'manual') setManualForceN(0)
+    setManualForceN(0)
 
     const g = buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42)
     const ions = buildIons(g)
     const lattices = g.map(buildLattice)
-    const phys = buildPhysics(ions, g, lattices, (crackParams[sandPct] ?? crackParams[40]).widthMul * 1.5)
+    const manualFbf = sandPct === 0
+      ? (SAND_FAULT_BREAK[0] ?? FAULT_BREAK_FACTOR) * (1 + (seededRandom(layoutSeed) * 2 - 1) * SAND_BREAK_VAR[0])
+      : (SAND_FAULT_BREAK[sandPct] ?? FAULT_BREAK_FACTOR)
+    const widthMul = (crackParams[sandPct] ?? crackParams[40]).widthMul * 1.5
+    const phys = buildPhysics(ions, g, lattices, widthMul, false, null, manualFbf)
+
+    // Fine pre-run for all ratios: find exact break point, then back-calculate effectiveScale
+    // so each button press shows exactly 20 kN and the LCD lands at the z-score-remapped target.
+    let effectiveScale = SAND_KN_SCALE[sandPct] ?? 0.381
+    {
+      const physPre = buildPhysics(ions, g, lattices, widthMul, false, null, manualFbf)
+      let preBreakN = null
+      for (let n = 1; n <= MANUAL_MAX_N; n++) {
+        const f = n / MANUAL_MAX_N
+        physPre.currentDisp = f * MAX_PUNCH_DISP
+        stepPhysics(physPre, f, 1, true)
+        if (physPre.bonds.some(b => b.broken)) { preBreakN = n; break }
+      }
+      if (preBreakN != null) {
+        const internalKN      = (preBreakN / MANUAL_MAX_N) * 2500
+        const z               = Math.tanh((internalKN - (OBSERVED_MEAN_KN[sandPct] ?? 1000)) / (OBSERVED_STD_KN[sandPct] ?? 200))
+        const targetDisplayKN = Math.max(1, (SAND_BREAK_KN[sandPct] ?? 600) * (1 + z * (SAND_BREAK_VAR[sandPct] ?? 0.10)))
+        effectiveScale        = targetDisplayKN * MANUAL_MAX_N / (2500 * preBreakN)
+      }
+    }
+    setManualEffectiveScale(effectiveScale)
 
     const recording = []
     let foundBreakN = null
 
-    for (let n = 0; n <= MANUAL_MAX_N; n += MANUAL_FORCE_STEP) {
+    const manualStep = 20 * MANUAL_MAX_N / (2500 * effectiveScale)
+    for (let n = 0; n <= MANUAL_MAX_N; n += manualStep) {
       const f = n / MANUAL_MAX_N
       // Pre-set displacement so stepPhysics doesn't ramp — it runs kinematic + relaxation instantly
       phys.currentDisp = f * MAX_PUNCH_DISP
-      const canBreak = f >= FRACTURE_THRESHOLD
-      stepPhysics(phys, f, 1, canBreak)
+      stepPhysics(phys, f, 1, true)
 
       if (foundBreakN === null && phys.bonds.some(b => b.broken)) foundBreakN = n
 
@@ -830,6 +930,11 @@ export default function ConcreteViewer() {
     }
 
     setManualP2T(0)  // reset auto-play on recording rebuild
+
+    const lcdAtBreak = foundBreakN != null
+      ? Math.round((foundBreakN / MANUAL_MAX_N) * 2500 * effectiveScale)
+      : null
+    console.log(`[MANUAL 0% REC] seed=${layoutSeed} manualStep=${(20 * MANUAL_MAX_N / (2500 * effectiveScale)).toFixed(3)} foundBreakN=${foundBreakN != null ? foundBreakN.toFixed(2) : 'NULL'} LCD_at_break=${lcdAtBreak} recording.length=${recording.length}`)
 
     setManualPhysBase({
       particles: phys.particles.map(p => ({ x0: p.x0, y0: p.y0, r: p.r, type: p.type, isGrain: p.isGrain })),
@@ -874,7 +979,8 @@ export default function ConcreteViewer() {
     const p2Count = totalFrames - p1Count
     if (manualBreakN == null || manualForceN < manualBreakN) {
       // Phase 1: force wiper — button position maps to strained frame
-      const idx = Math.min(Math.round(manualForceN / MANUAL_FORCE_STEP), p1Count - 1)
+      const scale = manualEffectiveScale ?? (SAND_KN_SCALE[sandPct] ?? 0.381)
+      const idx = Math.min(Math.round(manualForceN * 2500 * scale / (20 * MANUAL_MAX_N)), p1Count - 1)
       return idx / (totalFrames - 1)
     } else {
       // Phase 2: auto-play drives the frame; manualP2T stays at 1 when done
@@ -882,7 +988,7 @@ export default function ConcreteViewer() {
       const frameIdx = p1Count + p2Idx
       return Math.min(1, frameIdx / (totalFrames - 1))
     }
-  }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T])
+  }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T, manualEffectiveScale])
 
   const scrubElapsed = isManual
     ? (manualInP2 ? manualP2T * totalCrackMs : 0)
@@ -1102,20 +1208,12 @@ export default function ConcreteViewer() {
   // Effective bend anim: 1.0 in manual mode (force directly controls bend), else scrub or ramp
   const effectiveBendAnim = isManual ? 1.0 : (photoView === 'off' && hasRecording ? scrubT : bendAnim)
 
-  // Manual mode: z-score remap of the pre-computed break force into target display range
-  const manualDisplayBreakKN = useMemo(() => {
-    if (manualBreakN == null) return null
-    const internalKN = (manualBreakN / MANUAL_MAX_N) * 2500
-    const z = Math.tanh((internalKN - (OBSERVED_MEAN_KN[sandPct] ?? 1000)) / (OBSERVED_STD_KN[sandPct] ?? 200))
-    const targetMean = SAND_BREAK_KN[sandPct] ?? 600
-    return Math.max(1, Math.round(targetMean * (1 + z * (SAND_BREAK_VAR[sandPct] ?? 0.10))))
-  }, [manualBreakN, sandPct])
 
   // Force shown in LCD during scrub: linearly interpolated across p1 portion of recording
   const scrubDisplayKN = (() => {
     if (phase !== 'failed' || breakKN == null || !hasRecording || p2StartFrac == null) return null
     if (scrubT >= p2StartFrac) return breakKN
-    return scrubT / p2StartFrac * breakKN
+    return Math.round(scrubT / p2StartFrac * breakKN)
   })()
 
   // 0% sand has almost no grain-layout variability (no sand grains), so fbf randomness
@@ -1129,7 +1227,8 @@ export default function ConcreteViewer() {
     return base
   }, [sandPct, layoutSeed])
 
-  const kNScale = SAND_KN_SCALE[sandPct] ?? 0.381
+  const kNScale        = SAND_KN_SCALE[sandPct] ?? 0.381
+  const manualForceStep = 20 * MANUAL_MAX_N / (2500 * (manualEffectiveScale ?? kNScale))
 
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
@@ -1299,19 +1398,19 @@ export default function ConcreteViewer() {
                 <button
                   className="action-btn replay-btn"
                   style={{ padding: '3px 9px' }}
-                  onClick={() => setManualForceN(n => Math.max(0, n - MANUAL_FORCE_STEP))}
+                  onClick={() => setManualForceN(n => Math.max(0, n - manualForceStep))}
                   disabled={manualForceN === 0 || manualInP2}
                 ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>−</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
                 <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
                   <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
                   <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{manualInP2 && manualDisplayBreakKN != null ? manualDisplayBreakKN : Math.round((manualForceN / MANUAL_MAX_N) * 2500 * kNScale)}</span>
+                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))}</span>
                 </div>
                 <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
                 <button
                   className="action-btn test-btn"
                   style={{ padding: '3px 9px' }}
-                  onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + MANUAL_FORCE_STEP))}
+                  onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + manualForceStep))}
                   disabled={manualInP2}
                 ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>+</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
               </div>
@@ -1416,14 +1515,17 @@ export default function ConcreteViewer() {
           <div className="force-viz-space">
             {/* Particle key */}
             {(() => {
-              const atoms = [
-                { particles: [{ x: 0, y: 0, r: 4,   type: 'Si' }],                 label: <><b>Si</b> <sup>δ+</sup></> },
-                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: true }],  label: <><b>O</b> <sup>δ−</sup></>  },
-                { particles: [{ x: 0, y: 0, r: 5.5, type: 'Ca' }],                 label: <><b>Ca</b> <sup>2+</sup></>  },
-                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: false }], label: <><b>OH</b><sup>−</sup></>    },
+              const sandAtoms = [
+                { particles: [{ x: 0, y: 0, r: 4,   type: 'Si' }],                label: <><b>Si</b> <sup>δ+</sup></> },
+                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: true }], label: <><b>O</b> <sup>δ−</sup></>  },
               ]
-              return (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', flexShrink: 0, padding: '0 6px', rowGap: 3 }}>
+              const cementAtoms = [
+                { particles: [{ x: 0, y: 0, r: 5.5, type: 'Ca' }],                 label: <><b>Ca</b> <sup>2+</sup></> },
+                { particles: [{ x: 0, y: 0, r: 3,   type: 'O',  isGrain: false }], label: <><b>OH</b><sup>−</sup></>   },
+              ]
+              const labelStyle = { fontSize: 22, color: darkMode ? '#999' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }
+              const groupGrid  = atoms => (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', rowGap: 3 }}>
                   {atoms.map(({ particles }, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                       <BondIcon particles={particles} bonds={[]} scale={1.5} darkMode={darkMode} showCharge={chargeVisible} />
@@ -1431,9 +1533,21 @@ export default function ConcreteViewer() {
                   ))}
                   {atoms.map(({ label }, i) => (
                     <div key={i} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                      <span style={{ fontSize: 22, color: darkMode ? '#999' : '#666', fontFamily: 'Lexend, system-ui, sans-serif' }}>{label}</span>
+                      <span style={labelStyle}>{label}</span>
                     </div>
                   ))}
+                </div>
+              )
+              return (
+                <div style={{ display: 'flex', flexShrink: 0, padding: '0 6px', gap: 6 }}>
+                  <div style={{ flex: 1, border: '1.5px solid goldenrod', borderRadius: 4, padding: '4px 4px 2px', boxShadow: '0 0 0 1px rgba(0,0,0,0.6), 0 0 8px rgba(212,160,32,0.5)' }}>
+                    {groupGrid(sandAtoms)}
+                    <div style={{ textAlign: 'center', fontSize: 10, color: 'goldenrod', fontFamily: 'Lexend, system-ui, sans-serif', letterSpacing: '0.08em', marginTop: 2 }}>SAND</div>
+                  </div>
+                  <div style={{ flex: 1, padding: '4px 4px 2px' }}>
+                    {groupGrid(cementAtoms)}
+                    <div style={{ textAlign: 'center', fontSize: 10, color: darkMode ? '#999' : '#888', fontFamily: 'Lexend, system-ui, sans-serif', letterSpacing: '0.08em', marginTop: 2 }}>CEMENT</div>
+                  </div>
                 </div>
               )
             })()}
@@ -1568,7 +1682,7 @@ export default function ConcreteViewer() {
               scrubT={isManual ? manualScrubT : (photoView === 'off' && hasRecording ? scrubT : null)}
               onRecordingReady={isManual ? () => {} : handleRecordingReady}
               p2DispScale={redP2DispScale}
-              showField={isManual ? true : showField}
+              showField={showField}
               showCharge={chargeVisible}
               darkMode={darkMode}
               preloadedRecording={isManual ? manualRecording : null}

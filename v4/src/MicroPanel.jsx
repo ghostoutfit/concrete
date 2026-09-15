@@ -1926,6 +1926,10 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
           recordingRef.current.push({ type: 'p2', p2Progress: i / P2_SNAP_COUNT })
         }
         const p2Frac = (recordingRef.current.length - 1 - P2_SNAP_COUNT) / (recordingRef.current.length - 1)
+        const faultBonds  = phys.bonds.filter(b => b.isFault && b.type !== 'ss')
+        const brokenFault = faultBonds.filter(b => b.broken)
+        const sample      = brokenFault[0]
+        console.log(`[PHYSICS BREAK] dispForce=${dispForceRef.current.toFixed(4)}  raw×2500=${Math.round(dispForceRef.current*2500)}  frame=${frameCount}  faultBonds=${faultBonds.length}  broken=${brokenFault.length}  breakStrain=${sample?.breakStrain?.toFixed(5) ?? 'n/a'}`)
         onBreakStartRef.current?.()
         onRecordingReady?.(p2Frac)
         onFailed?.(Math.round(dispForceRef.current * 2500))
