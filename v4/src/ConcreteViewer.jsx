@@ -976,7 +976,7 @@ export default function ConcreteViewer() {
   const activeIsRunning    = activeBox === 'blue'
     ? (bluePhase === 'idle' || bluePhase === 'testing')
     : (phase === 'idle' || phase === 'testing')
-  const isScrubbable = photoView === 'off' && (!isManual ? hasRecording : (manualInP2 && manualP2T >= 1))
+  const isScrubbable = (photoView === 'off' || photoView === 'full') && (!isManual ? hasRecording : (manualInP2 && manualP2T >= 1))
 
   // Manual mode: compute scrubT into the preloaded recording
   const manualScrubT = useMemo(() => {
@@ -1005,9 +1005,11 @@ export default function ConcreteViewer() {
   const photoCrackProgress = isManual
     ? (manualInP2 ? manualP2T : 0)
     : (isScrubbable
-        ? (activeBox === 'blue'
+        ? (activeBox === 'blue' && photoView === 'off'
             ? Math.max(0, Math.min(1, scrubT / 0.10))
-            : Math.max(0, Math.min(1, (scrubT - 0.95) / 0.05)))
+            : photoView === 'full' && p2StartFrac != null
+                ? Math.max(0, Math.min(1, (scrubT - p2StartFrac) / 0.05))
+                : Math.max(0, Math.min(1, (scrubT - 0.95) / 0.05)))
         : null)
 
   const scrubElapsed = photoCrackProgress != null ? photoCrackProgress * totalCrackMs : null
@@ -1175,9 +1177,8 @@ export default function ConcreteViewer() {
 
   // Phase-2 transform: moves/scales sim wrapper to match red box in photo, then back to normal.
   // Uses getBoundingClientRect so photo-stage and micro-square can have independent sizes.
-  function computeP2Transform(p2T) {
+  function computeP2Transform(p2T, msEl = microSquareRef.current) {
     const psEl = photoStageRef.current   // photo stage (covers micro-section)
-    const msEl = microSquareRef.current  // micro-square (sim host)
     if (!psEl || !msEl) return 'none'
 
     const psRect = psEl.getBoundingClientRect()
@@ -1216,14 +1217,22 @@ export default function ConcreteViewer() {
     return `translate(${tx}%, ${ty}%) scale(${lerp(sx0, 1, p2T)}, ${lerp(sy0, 1, p2T)})`
   }
 
+  const targetPanelEl = activeBox === 'blue' ? blueSquareRef.current : microSquareRef.current
   const p2Transform = inPhase2
-    ? computeP2Transform(phase2Step / PHASE2_STEPS)
+    ? computeP2Transform(phase2Step / PHASE2_STEPS, targetPanelEl)
     : 'none'
 
   const panelForce = isManual ? manualNormForce : force
 
-  // Effective bend anim: 1.0 in manual mode (force directly controls bend), else scrub or ramp
-  const effectiveBendAnim = isManual ? 1.0 : (photoView === 'off' && hasRecording ? scrubT : bendAnim)
+  // Effective bend anim: 1.0 in manual mode (force directly controls bend), else scrub or ramp.
+  // Photo view: ramp with scrubT through phase 1, then snap to 1 at p2StartFrac to replicate
+  // the live-test jump (bar reaches max bend the moment particles start separating).
+  const effectiveBendAnim = isManual ? 1.0
+    : ((photoView === 'off' || photoView === 'full') && hasRecording
+        ? (photoView === 'full' && p2StartFrac != null
+            ? (scrubT < p2StartFrac ? scrubT : 1.0)
+            : scrubT)
+        : bendAnim)
 
 
   // Force shown in LCD during scrub: linearly interpolated across p1 portion of recording
@@ -1265,8 +1274,8 @@ export default function ConcreteViewer() {
   const effectiveSimReady = showDevSliders ? zoomScrubT > 0.5 : simReady
   const simWrapperStyle = {
     flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
-    visibility: (!showPhoto || (activeBox !== 'grey' && (effectiveSimReady || needsP2Xfrm))) ? 'visible' : 'hidden',
-    ...(needsP2Xfrm ? {
+    visibility: (!showPhoto || (activeBox === 'red' && (effectiveSimReady || needsP2Xfrm))) ? 'visible' : 'hidden',
+    ...(needsP2Xfrm && activeBox !== 'blue' ? {
       position: 'relative',
       zIndex: 20,
       transform: p2Transform,
@@ -1275,6 +1284,13 @@ export default function ConcreteViewer() {
   }
   const blueWrapperStyle = {
     flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
+    visibility: (!showPhoto || (activeBox === 'blue' && (effectiveSimReady || needsP2Xfrm))) ? 'visible' : 'hidden',
+    ...(needsP2Xfrm && activeBox === 'blue' ? {
+      position: 'relative',
+      zIndex: 20,
+      transform: p2Transform,
+      transformOrigin: '50% 50%',
+    } : {}),
   }
 
   return (
