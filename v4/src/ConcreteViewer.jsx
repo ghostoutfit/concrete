@@ -996,13 +996,19 @@ export default function ConcreteViewer() {
     }
   }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T, manualEffectiveScale])
 
-  const scrubElapsed = isManual
-    ? (manualInP2 ? manualP2T * totalCrackMs : 0)
+  // Photo crack progress — 0→1 cursor for the SVG strand animation, independent of
+  // the particle canvas (scrubT / manualP2T). Adjust timing here without touching particles.
+  // Blue: crack propagates over first 10% of scrub bar (appears quickly at start of p2).
+  // Red/grey: crack propagates over last 5% of scrub bar (dramatic appearance at end).
+  const photoCrackProgress = isManual
+    ? (manualInP2 ? manualP2T : 0)
     : (isScrubbable
-        ? (p2StartFrac != null
-            ? Math.max(0, Math.min(1, (scrubT - p2StartFrac) / (1 - p2StartFrac))) * totalCrackMs
-            : scrubT * totalCrackMs)
+        ? (activeBox === 'blue'
+            ? Math.max(0, Math.min(1, scrubT / 0.10))
+            : Math.max(0, Math.min(1, (scrubT - 0.95) / 0.05)))
         : null)
+
+  const scrubElapsed = photoCrackProgress != null ? photoCrackProgress * totalCrackMs : null
 
   // Blue box: place at deepest fromTop strand endpoint, only when crack doesn't go all the way through
   const bestBranch = useMemo(() => {
@@ -1070,6 +1076,7 @@ export default function ConcreteViewer() {
   function handleBoxClick(box) {
     if (photoView !== 'full') return
     setActiveBox(box)
+    setScrubT(1)
     setPhotoView('zooming')
     const stepMs = PHASE1_DURATION / PHASE1_STEPS
     let step = 0
