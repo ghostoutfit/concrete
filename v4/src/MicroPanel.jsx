@@ -1473,7 +1473,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
   useEffect(() => { speedRef.current = speed }, [speed])
   useEffect(() => { showDiagRef.current = showDiag }, [showDiag])
   useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
-  useEffect(() => { scrubTRef.current = scrubT }, [scrubT])
+  useLayoutEffect(() => { scrubTRef.current = scrubT }, [scrubT])
 
   // Rebuild physics whenever layout changes
   useEffect(() => {
@@ -1767,7 +1767,7 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   useEffect(() => { showDiagRef.current = showDiag }, [showDiag])
   useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
   useEffect(() => { showFieldRef.current = showField }, [showField])
-  useEffect(() => { scrubTRef.current = scrubT }, [scrubT])
+  useLayoutEffect(() => { scrubTRef.current = scrubT }, [scrubT])
   useEffect(() => { p2DispScaleRef.current = p2DispScale }, [p2DispScale])
   useEffect(() => { faultBreakFactorRef.current = faultBreakFactor }, [faultBreakFactor])
   useEffect(() => { showChargeRef.current = showCharge }, [showCharge])

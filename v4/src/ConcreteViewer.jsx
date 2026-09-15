@@ -14,13 +14,16 @@ const SAND_BREAK_KN  = { 0: 600, 20: 650, 40: 750, 60: 900, 80: 400 }
 const SAND_BREAK_VAR = { 0: 0.40, 20: 0.20, 40: 0.10, 60: 0.10, 80: 0.10 }
 // Per-mix fault bond break factor — scales how much strain fault bonds tolerate before snapping.
 const SAND_FAULT_BREAK = { 0: 0.200, 20: 0.217, 40: 0.250, 60: 0.333, 80: 0.133 }
-// Observed distribution of raw physics break force (internal kN = dispForce × 2500) per ratio.
-// Derived from runBreakTests with constant fbf (no fbf randomness) and noDiag=true.
-// Used to z-score remap internalKN → target display range at break time.
+// Observed distribution of raw physics break force (internal kN) — MANUAL pre-run context.
+// widthMul=SAND_KN_SCALE, isBlue=false, 600 fine steps. Calibrate via runManualTests(50).
 const OBSERVED_MEAN_KN = { 0: 883, 20: 340, 40: 294, 60: 353, 80: 120 }
 const OBSERVED_STD_KN  = { 0: 192, 20: 109, 40:  69, 60: 110, 80: 140 }
+// Observed distribution — LIVE test context (widthMul=1, isBlue=true, +0.004/frame).
+// Calibrate via runBreakTests(50) — feed the iKN mean/std columns back to update these.
+const LIVE_OBSERVED_MEAN_KN = { 0: 1087, 20: 464, 40: 480, 60: 838, 80: 314 }
+const LIVE_OBSERVED_STD_KN  = { 0:  249, 20: 200, 40: 208, 60: 424, 80: 170 }
 // Empirical LCD scaling for rising animation (before break): internal kN → displayed kN.
-const SAND_KN_SCALE = { 0: 0.552, 20: 1.244, 40: 1.298, 60: 1.182, 80: 1.258 }
+const SAND_KN_SCALE = { 0: 0.552, 20: 1.401, 40: 1.563, 60: 1.074, 80: 1.274 }
 
 function seededRandom(seed) {
   const x = Math.sin(seed * 9301 + 49297) * 233280
@@ -59,17 +62,18 @@ const BAR_SRCS = {
 // Outputs a console.table() of every individual result for histogram analysis,
 // plus a summary line per ratio. Call e.g. runBreakTests(200).
 function runBreakTests(count = 10) {
-  const results = {}
-  const rows    = []
+  const histRows  = []  // per-seed data for histogram overlay
+  const summary   = []  // per-ratio summary for console output
 
   for (const pct of [0, 20, 40, 60, 80]) {
     const fbf        = SAND_FAULT_BREAK[pct] ?? FAULT_BREAK_FACTOR
     const targetMean = SAND_BREAK_KN[pct]    ?? 600
     const targetCv   = SAND_BREAK_VAR[pct]   ?? 0.10
-    const obsMean    = OBSERVED_MEAN_KN[pct]  ?? 1000
-    const obsStd     = OBSERVED_STD_KN[pct]   ?? 200
+    const obsMean    = LIVE_OBSERVED_MEAN_KN[pct] ?? 1000
+    const obsStd     = LIVE_OBSERVED_STD_KN[pct]  ?? 200
 
-    const displays = []
+    const displays   = []
+    const internals  = []
     for (let i = 0; i < count; i++) {
       const seed      = Math.round(Math.random() * 1e6)
       const layoutFbf = pct === 0
@@ -90,24 +94,26 @@ function runBreakTests(count = 10) {
       }
 
       if (breakForce != null) {
-        const internalKN  = breakForce * 2500
-        const z           = Math.tanh((internalKN - obsMean) / obsStd)
-        const displayKN   = Math.max(1, Math.round(targetMean * (1 + z * targetCv)))
+        const internalKN = breakForce * 2500
+        const z          = Math.tanh((internalKN - obsMean) / obsStd)
+        const displayKN  = Math.max(1, Math.round(targetMean * (1 + z * targetCv)))
         displays.push(displayKN)
-        rows.push({ sand: `${pct}%`, seed, displayKN, internalKN: Math.round(internalKN), z: +z.toFixed(3) })
+        internals.push(Math.round(internalKN))
+        histRows.push({ sand: `${pct}%`, seed, displayKN, internalKN: Math.round(internalKN), z: +z.toFixed(3) })
       }
     }
 
-    const avg  = displays.length ? Math.round(displays.reduce((a, b) => a + b) / displays.length) : null
-    const minD = displays.length ? Math.min(...displays) : null
-    const maxD = displays.length ? Math.max(...displays) : null
-    console.log(`${pct}%: range ${minD}–${maxD} kN  avg=${avg}  target=${targetMean}`)
-    results[pct] = { avg, minD, maxD, target: targetMean }
+    const avg   = displays.length  ? Math.round(displays.reduce((a, b) => a + b) / displays.length) : null
+    const minD  = displays.length  ? Math.min(...displays) : null
+    const maxD  = displays.length  ? Math.max(...displays) : null
+    const iMean = internals.length ? Math.round(internals.reduce((a, b) => a + b) / internals.length) : null
+    const iStd  = internals.length ? Math.round(Math.sqrt(internals.map(v => (v - iMean) ** 2).reduce((a, b) => a + b) / internals.length)) : null
+    summary.push({ 'sand%': `${pct}%`, min: minD, avg, max: maxD, target: targetMean, 'spec range': `${Math.round(targetMean*(1-targetCv))}–${Math.round(targetMean*(1+targetCv))}`, 'iKN mean': iMean, 'iKN std': iStd, 'const mean': obsMean })
   }
 
-  console.table(rows)
-  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('breakTestData', { detail: rows }))
-  return results
+  console.table(summary)
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('breakTestData', { detail: histRows }))
+  return summary
 }
 if (typeof window !== 'undefined') window.runBreakTests = runBreakTests
 
@@ -1014,6 +1020,7 @@ export default function ConcreteViewer() {
   }
   function startReplay(speedMul) {
     if (replayRafRef.current) cancelAnimationFrame(replayRafRef.current)
+    replayRafRef.current = null
     const duration = 3000 / speedMul
     const start = performance.now()
     setScrubT(0)
@@ -1021,6 +1028,7 @@ export default function ConcreteViewer() {
       const t = Math.min(1, (now - start) / duration)
       setScrubT(t)
       if (t < 1) replayRafRef.current = requestAnimationFrame(tick)
+      else replayRafRef.current = null
     }
     replayRafRef.current = requestAnimationFrame(tick)
   }
@@ -1049,7 +1057,7 @@ export default function ConcreteViewer() {
     breakFiredRef.current = true
     let displayKN = null
     if (kn != null) {
-      const z        = Math.tanh((kn - (OBSERVED_MEAN_KN[sandPct] ?? 1000)) / (OBSERVED_STD_KN[sandPct] ?? 200))
+      const z        = Math.tanh((kn - (LIVE_OBSERVED_MEAN_KN[sandPct] ?? 1000)) / (LIVE_OBSERVED_STD_KN[sandPct] ?? 200))
       const targetMean = SAND_BREAK_KN[sandPct] ?? 600
       const targetCv   = SAND_BREAK_VAR[sandPct] ?? 0.10
       displayKN = Math.max(1, Math.round(targetMean * (1 + z * targetCv)))
@@ -1229,6 +1237,10 @@ export default function ConcreteViewer() {
 
   const kNScale        = SAND_KN_SCALE[sandPct] ?? 0.381
   const manualForceStep = 20 * MANUAL_MAX_N / (2500 * (manualEffectiveScale ?? kNScale))
+  const liveSpecCeil   = Math.round((SAND_BREAK_KN[sandPct] ?? 600) * (1 + (SAND_BREAK_VAR[sandPct] ?? 0.10)))
+  const liveDisplayKN  = scrubDisplayKN != null ? scrubDisplayKN : Math.min(Math.round(liveDispForce * 2500 * kNScale), liveSpecCeil)
+  const manualDisplayKN = Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))
+  const displayKN = isManual ? manualDisplayKN : liveDisplayKN
 
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
@@ -1264,26 +1276,14 @@ export default function ConcreteViewer() {
           <div className="panel-bolt" style={{ top: 9, right: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, left: 9 }} />
           <div className="panel-bolt" style={{ bottom: 9, right: 9 }} />
-          {/* Scrub slider + replay — sits between the bottom bolts; hidden in manual mode */}
-          <div style={{ position: 'absolute', bottom: 7, left: 50, right: 30, display: (isManual || photoView !== 'off') ? 'none' : 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ flex: 1, minWidth: 0, marginRight: 50, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
+          {/* Scrub slider — sits between the bottom bolts; hidden in manual mode */}
+          <div style={{ position: 'absolute', bottom: 7, left: 50, right: 50, display: (isManual || photoView !== 'off') ? 'none' : 'flex', alignItems: 'center' }}>
+            <div style={{ flex: 1, minWidth: 0, pointerEvents: activeHasRecording ? 'auto' : 'none' }}>
               <ScrubSlider value={scrubT} onChange={v => {
                 if (replayRafRef.current) { cancelAnimationFrame(replayRafRef.current); replayRafRef.current = null }
                 setScrubT(v)
               }} disabled={!activeHasRecording} />
             </div>
-            <button
-              className="action-btn test-btn"
-              onClick={() => startReplay(0.25)}
-              disabled={!activeHasRecording}
-              style={{ flexShrink: 0, transform: 'translateX(-30px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            ><img src="/concrete/Turtle.png" draggable={false} style={{ height: '1.5em', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '1.4em', color: '#90c8f0', lineHeight: 1 }}>↺</span></button>
-            <button
-              className="action-btn test-btn"
-              onClick={() => startReplay(1)}
-              disabled={!activeHasRecording}
-              style={{ flexShrink: 0, transform: 'translateX(-20px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            ><img src="/concrete/Rabbit.png" draggable={false} style={{ height: '1.5em', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '1.4em', color: '#90c8f0', lineHeight: 1 }}>↺</span></button>
           </div>
           {/* Tab strip */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: 2, marginBottom: 5 }}>
@@ -1297,159 +1297,132 @@ export default function ConcreteViewer() {
             >Manual Force Values</button>
           </div>
 
-          {controlTab === 'ratio' ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-              {/* Sand preset group — heading centered only on presets */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  {SAND_PRESETS.map(pct => (
-                    <button key={pct}
-                      className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
-                      onClick={() => handleSandPct(pct)}
-                    >
-                      <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="toolbar-divider" />
-              {phase === 'failed' || phase === 'settled'
-                ? <button className="action-btn test-btn" style={{ width: 68, padding: '3px 0' }} onClick={() => handleSandPct(sandPct)}>Reset</button>
-                : <button className="action-btn test-btn" style={{ width: 68, padding: '3px 0' }} onClick={startTest} disabled={phase === 'testing'}>Test</button>
-              }
-              <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
-                <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
-                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{scrubDisplayKN != null ? scrubDisplayKN : Math.round(liveDispForce * 2500 * kNScale)}</span>
-              </div>
-              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
-              <div className="toolbar-divider" />
-              {photoView === 'off' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)', fontSize: 13 }}>Show/Hide Visuals</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                    <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} onClick={() => setShowCount(f => !f)}>Count</button>
-                    <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} onClick={() => setChargeVisible(f => !f)}>Charge</button>
-                    <button className={`action-btn replay-btn${showField ? ' active' : ''}`} onClick={() => setShowField(f => !f)}>Field</button>
+          {/* Action row: tab-specific left/center + persistent right column */}
+          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+            {/* Tab-specific left+center — flex:1 so it absorbs all remaining space */}
+            <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end', minWidth: 0 }}>
+              {controlTab === 'ratio' ? (
+                <>
+                  {/* Sand preset group */}
+                  <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      {SAND_PRESETS.map(pct => (
+                        <button key={pct}
+                          className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
+                          onClick={() => handleSandPct(pct)}
+                        >
+                          <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                  <div className="toolbar-divider" style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1 }} />
+                  {/* Action buttons */}
+                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {phase === 'failed' || phase === 'settled'
+                      ? <button className="action-btn test-btn" style={{ width: 68, padding: '3px 0' }} onClick={() => handleSandPct(sandPct)}>Reset</button>
+                      : <button className="action-btn test-btn" style={{ width: 68, padding: '3px 0' }} onClick={startTest} disabled={phase === 'testing'}>Test</button>
+                    }
+                    <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+                      <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
+                      <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
+                      <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{liveDisplayKN}</span>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
+                    <button
+                      className="action-btn test-btn"
+                      onClick={() => startReplay(0.25)}
+                      disabled={!activeHasRecording}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    ><img src="/concrete/Turtle.png" draggable={false} style={{ height: '1.5em', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '1.4em', color: '#90c8f0', lineHeight: 1 }}>↺</span></button>
+                    <button
+                      className="action-btn test-btn"
+                      onClick={() => startReplay(1)}
+                      disabled={!activeHasRecording}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    ><img src="/concrete/Rabbit.png" draggable={false} style={{ height: '1.5em', filter: 'brightness(0) invert(1) brightness(0.7) sepia(1) hue-rotate(166deg) brightness(0.95)', marginRight: 3 }} /><span style={{ fontSize: '1.4em', color: '#90c8f0', lineHeight: 1 }}>↺</span></button>
+                  </div>
+                  <div style={{ flex: 1 }} />
+                  <div className="toolbar-divider" style={{ flexShrink: 0 }} />
+                </>
+              ) : !manualRecording ? (
+                <div style={{ flex: 1, color: 'rgba(200,215,230,0.55)', fontSize: 14, fontWeight: 600, letterSpacing: '0.08em', textAlign: 'center' }}>
+                  Loading…
                 </div>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <button className="action-btn" style={{ background: 'rgba(200,40,40,0.25)', borderColor: 'rgba(200,60,60,0.6)', color: '#ff8888' }} onClick={() => handleBoxClick('red')}>Zoom to Crack Start</button>
-                </div>
+                <>
+                  {/* Sand:Cement presets */}
+                  <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      {SAND_PRESETS.map(pct => (
+                        <button key={pct}
+                          className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
+                          onClick={() => handleSandPct(pct)}
+                        >
+                          <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="toolbar-divider" style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1 }} />
+                  {/* Force buttons */}
+                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button
+                      className="action-btn replay-btn"
+                      style={{ padding: '3px 9px' }}
+                      onClick={() => setManualForceN(n => Math.max(0, n - manualForceStep))}
+                      disabled={manualForceN === 0 || manualInP2}
+                    ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>−</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
+                    <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+                      <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
+                      <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
+                      <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))}</span>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
+                    <button
+                      className="action-btn test-btn"
+                      style={{ padding: '3px 9px' }}
+                      onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + manualForceStep))}
+                      disabled={manualInP2}
+                    ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>+</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
+                  </div>
+                  <div style={{ flex: 1 }} />
+                  <div className="toolbar-divider" style={{ flexShrink: 0 }} />
+                </>
               )}
-              <div className="toolbar-divider" />
-              {/* Right: theme toggle */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020', display: 'inline-block', width: 18, textAlign: 'center' }}>{darkMode ? '☽' : '☀'}</span>
-                <div
-                  onClick={() => setDarkMode(f => !f)}
-                  style={{
-                    width: 36, height: 20, borderRadius: 10, cursor: 'pointer',
-                    background: darkMode ? 'rgba(140,180,255,0.25)' : 'rgba(255,200,40,0.35)',
-                    border: darkMode ? '1px solid rgba(140,180,255,0.4)' : '1px solid rgba(200,150,20,0.45)',
-                    position: 'relative', transition: 'background 0.2s, border-color 0.2s',
-                    flexShrink: 0,
-                  }}
-                >
-                  <div style={{
-                    width: 14, height: 14, borderRadius: 7,
-                    background: darkMode ? '#a0c0ff' : '#ffc020',
-                    position: 'absolute', top: 2,
-                    left: darkMode ? 2 : 18,
-                    transition: 'left 0.2s, background 0.2s',
-                    boxShadow: darkMode
-                      ? '0 0 6px rgba(160,200,255,0.9)'
-                      : '0 0 6px rgba(255,180,0,0.9)',
-                  }} />
-                </div>
-              </div>
             </div>
-          ) : !manualRecording ? (
-            <div style={{ color: 'rgba(200,215,230,0.55)', fontSize: 14, fontWeight: 600, letterSpacing: '0.08em', textAlign: 'center' }}>
-              Loading…
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-              {/* Sand:Cement presets */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline' }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: '#8a6a0a' }}>% Sand</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#5a7888', marginLeft: 3 }}>/ Cement</span>
+            {/* Persistent right column: toggle directly above Show/Hide — never moves */}
+            {photoView === 'off' ? (
+              <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative', top: -20 }}>
+                  <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020', display: 'inline-block', width: 18, textAlign: 'center' }}>{darkMode ? '☽' : '☀'}</span>
+                  <div onClick={() => setDarkMode(f => !f)} style={{ width: 36, height: 20, borderRadius: 10, cursor: 'pointer', background: darkMode ? 'rgba(140,180,255,0.25)' : 'rgba(255,200,40,0.35)', border: darkMode ? '1px solid rgba(140,180,255,0.4)' : '1px solid rgba(200,150,20,0.45)', position: 'relative', transition: 'background 0.2s, border-color 0.2s', flexShrink: 0 }}>
+                    <div style={{ width: 14, height: 14, borderRadius: 7, background: darkMode ? '#a0c0ff' : '#ffc020', position: 'absolute', top: 2, left: darkMode ? 2 : 18, transition: 'left 0.2s, background 0.2s', boxShadow: darkMode ? '0 0 6px rgba(160,200,255,0.9)' : '0 0 6px rgba(255,180,0,0.9)' }} />
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                  {SAND_PRESETS.map(pct => (
-                    <button key={pct}
-                      className={`preset-btn ${sandPct === pct ? 'active' : ''}`}
-                      onClick={() => handleSandPct(pct)}
-                    >
-                      <span style={{ color: '#c8a020' }}>{pct}</span><span style={{ color: '#6a8898' }}>/{100 - pct}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="toolbar-divider" />
-              {/* Force buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  className="action-btn replay-btn"
-                  style={{ padding: '3px 9px' }}
-                  onClick={() => setManualForceN(n => Math.max(0, n - manualForceStep))}
-                  disabled={manualForceN === 0 || manualInP2}
-                ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>−</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
-                <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
-                  <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
-                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                  <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))}</span>
-                </div>
-                <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
-                <button
-                  className="action-btn test-btn"
-                  style={{ padding: '3px 9px' }}
-                  onClick={() => setManualForceN(n => Math.min(MANUAL_MAX_N, n + manualForceStep))}
-                  disabled={manualInP2}
-                ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>+</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
-              </div>
-              <div className="toolbar-divider" />
-              {/* Show/Hide Visuals */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)', fontSize: 13 }}>Show/Hide Visuals</span>
+                <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: 'rgba(30,45,60,0.70)' }}>Show/Hide Visuals</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                   <button className={`action-btn replay-btn${showCount ? ' active' : ''}`} style={{ padding: '3px 13px' }} onClick={() => setShowCount(f => !f)}>Count</button>
                   <button className={`action-btn replay-btn${chargeVisible ? ' active' : ''}`} style={{ padding: '3px 13px' }} onClick={() => setChargeVisible(f => !f)}>Charge</button>
                   <button className={`action-btn replay-btn${showField ? ' active' : ''}`} style={{ padding: '3px 13px' }} onClick={() => setShowField(f => !f)}>Field</button>
                 </div>
               </div>
-              <div className="toolbar-divider" />
-              {/* Theme toggle */}
-              <span style={{ fontSize: 15, lineHeight: 1, userSelect: 'none', color: '#ffc020', display: 'inline-block', width: 18, textAlign: 'center' }}>{darkMode ? '☽' : '☀'}</span>
-              <div
-                onClick={() => setDarkMode(f => !f)}
-                style={{
-                  width: 36, height: 20, borderRadius: 10, cursor: 'pointer',
-                  background: darkMode ? 'rgba(140,180,255,0.25)' : 'rgba(255,200,40,0.35)',
-                  border: darkMode ? '1px solid rgba(140,180,255,0.4)' : '1px solid rgba(200,150,20,0.45)',
-                  position: 'relative', transition: 'background 0.2s, border-color 0.2s',
-                  flexShrink: 0,
-                }}
-              >
-                <div style={{
-                  width: 14, height: 14, borderRadius: 7,
-                  background: darkMode ? '#a0c0ff' : '#ffc020',
-                  position: 'absolute', top: 2,
-                  left: darkMode ? 2 : 18,
-                  transition: 'left 0.2s, background 0.2s',
-                  boxShadow: darkMode
-                    ? '0 0 6px rgba(160,200,255,0.9)'
-                    : '0 0 6px rgba(255,180,0,0.9)',
-                }} />
+            ) : (
+              <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
+                <button className="action-btn" style={{ background: 'rgba(200,40,40,0.25)', borderColor: 'rgba(200,60,60,0.6)', color: '#ff8888' }} onClick={() => handleBoxClick('red')}>Zoom to Crack Start</button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
 
         </div>
@@ -1481,7 +1454,7 @@ export default function ConcreteViewer() {
               scrubElapsed={scrubElapsed}
               pusherX={pusherX} pusherY={pusherY + pusherDropPct} pusherNudgePct={-0.5}
               pusherSize={pusherSize}
-              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={scrubDisplayKN != null ? scrubDisplayKN : Math.round(liveDispForce * 2500 * kNScale)} containerW={miniPhotoW} lcdNudge={{ dx: 0, dy: -1 }}
+              lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={displayKN} containerW={miniPhotoW} lcdNudge={{ dx: 0, dy: -1 }}
               showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
               photoViewIsZooming={photoView === 'zooming'}
               photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
@@ -1846,7 +1819,7 @@ export default function ConcreteViewer() {
                 scrubElapsed={scrubElapsed}
                 pusherX={pusherX} pusherY={pusherY + pusherDropPct}
                 pusherSize={pusherSize}
-                lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={scrubDisplayKN != null ? scrubDisplayKN : Math.round(liveDispForce * 2500 * kNScale)} containerW={zoomLayerW}
+                lcdX={lcdX} lcdY={lcdY + pusherDropPct} lcdKN={displayKN} containerW={zoomLayerW}
                 showPhotoCracks={showPhotoCracks} showBlueCrack={showBlueCrack}
                 photoViewIsZooming={photoView === 'zooming'}
                 photoBoxY={photoBoxY} blueBoxPos={blueBoxPos} greyBoxX={greyBoxX}
