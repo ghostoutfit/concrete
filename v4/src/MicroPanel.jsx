@@ -41,6 +41,7 @@ const BOND_BREAK = {
   'ss':      0.08,
   'cs':      0.010,  // weaker than bulk cement — interface debonds before cement cracks
 }
+const GREY_COMPRESSION_WU = 1.6  // max vertical squeeze (world units) at top of grey panel at compressionT=1
 const P2_SNAP_RAMP = 0.40  // fraction of Phase 2 each particle spends sliding; wide so many rows overlap
 const P2_JITTER    = 0.05  // per-particle random offset breaks row synchronisation
 const NEAR_BOND  = MATRIX_SPACING * 1.15           // ~18.4 px
@@ -1723,7 +1724,7 @@ export default function MicroPanel({ sandPct, phase = 'idle', layoutSeed = 0, fo
 }
 
 // ── View B: Phase 1 (bonds stress, atoms at rest) → Phase 2 (bonds break, atoms displace) ──
-export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, noDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, onBreakStart, onForceUpdate, scrubT = null, onRecordingReady, p2DispScale = 1, showField = true, showCharge = false, onBondCounts, preloadedRecording = null, darkMode = true, faultBreakFactor = FAULT_BREAK_FACTOR }) {
+export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0, speed = 1, showDiag = false, noDiag = false, bondRound = 1.6, crackWaypoints: crackWaypointsProp, grainOverride = null, accentColor = '#cc2222', label = null, onSettled, onFailed, onBreakStart, onForceUpdate, scrubT = null, onRecordingReady, p2DispScale = 1, showField = true, showCharge = false, onBondCounts, preloadedRecording = null, darkMode = true, faultBreakFactor = FAULT_BREAK_FACTOR, compressionT = 0 }) {
   const grains   = useMemo(
     () => grainOverride ?? buildGrains(sandPct, layoutSeed * 7919 + sandPct * 137 + 42),
     [sandPct, layoutSeed, grainOverride]
@@ -1768,6 +1769,8 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
   useEffect(() => { bondRoundRef.current = bondRound }, [bondRound])
   useEffect(() => { showFieldRef.current = showField }, [showField])
   useLayoutEffect(() => { scrubTRef.current = scrubT }, [scrubT])
+  const compressionTRef = useRef(compressionT)
+  useLayoutEffect(() => { compressionTRef.current = compressionT }, [compressionT])
   useEffect(() => { p2DispScaleRef.current = p2DispScale }, [p2DispScale])
   useEffect(() => { faultBreakFactorRef.current = faultBreakFactor }, [faultBreakFactor])
   useEffect(() => { showChargeRef.current = showCharge }, [showCharge])
@@ -1830,8 +1833,29 @@ export function MicroPanelB({ sandPct, phase = 'idle', layoutSeed = 0, force = 0
       finalSnapRef.current = null
       lastP1SnapRef.current = null
       function idleLoop(ts) {
-        drawScene(canvasRef.current, physRef.current, 0, physRef.current?.crackWaypoints, ts, false, 1.6, bondRoundRef.current, showFieldRef.current, showChargeRef.current, darkModeRef.current)
-        emitBondCounts(physRef.current)
+        const phys = physRef.current
+        const compT = compressionTRef.current
+        if (compT > 0) {
+          for (const p of phys.particles) p.y = p.y0 + (1 - p.y0 / VH) * compT * GREY_COMPRESSION_WU
+          for (const bond of phys.bonds) {
+            if (bond.broken) continue
+            const pi = phys.particles[bond.i], pj = phys.particles[bond.j]
+            const d = Math.hypot(pj.x - pi.x, pj.y - pi.y)
+            bond._s = bond.strain
+            bond._bs = bond.breakStrain
+            bond.strain = ((d - bond.restLen) / bond.restLen) * 0.504
+            bond.breakStrain = BOND_BREAK['cc-near']
+          }
+        }
+        drawScene(canvasRef.current, phys, 0, phys?.crackWaypoints, ts, false, 1.6, bondRoundRef.current, showFieldRef.current, showChargeRef.current, darkModeRef.current)
+        if (compT > 0) {
+          for (const p of phys.particles) p.y = p.y0
+          for (const bond of phys.bonds) {
+            if (bond._s !== undefined) { bond.strain = bond._s; delete bond._s }
+            if (bond._bs !== undefined) { bond.breakStrain = bond._bs; delete bond._bs }
+          }
+        }
+        emitBondCounts(phys)
         rafRef.current = requestAnimationFrame(idleLoop)
       }
       rafRef.current = requestAnimationFrame(idleLoop)

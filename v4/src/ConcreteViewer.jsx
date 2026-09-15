@@ -998,6 +998,12 @@ export default function ConcreteViewer() {
     }
   }, [controlTab, manualRecording, manualForceN, manualBreakN, manualP2T, manualEffectiveScale])
 
+  const manualP2StartFrac = useMemo(() => {
+    if (!manualRecording?.length) return null
+    const p1Count = manualRecording.filter(s => s.forceN != null).length
+    return p1Count / (manualRecording.length - 1)
+  }, [manualRecording])
+
   // Photo crack progress — 0→1 cursor for the SVG strand animation, independent of
   // the particle canvas (scrubT / manualP2T). Adjust timing here without touching particles.
   // Blue: crack propagates over first 10% of scrub bar (appears quickly at start of p2).
@@ -1042,8 +1048,8 @@ export default function ConcreteViewer() {
     }
     replayRafRef.current = requestAnimationFrame(tick)
   }
-  function startTest()  { breakFiredRef.current = false; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox('red'); setForce(1); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(bondCounts) }
-  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox('red'); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setInitialBondCounts(null) }
+  function startTest()  { breakFiredRef.current = false; clearRecording(); setPhase('testing'); setBluePhase('testing'); setActiveBox(ab => ab === 'grey' ? 'grey' : 'red'); setForce(1); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setInitialBondCounts(bondCounts) }
+  function reset()      { breakFiredRef.current = false; clearRecording(); setPhase('idle'); setBluePhase('idle'); setActiveBox(ab => ab === 'grey' ? 'grey' : 'red'); setLiveDispForce(0); setBreakKN(null); setBlueHasRecording(false); setP2StartFrac(null); setLayoutSeed(Math.round(Math.random() * 1e6)); setBlueLayoutSeed(Math.round(Math.random() * 1e6)); setGreyLayoutSeed(Math.round(Math.random() * 1e6)); setInitialBondCounts(null) }
   function handleReplay() {
     breakFiredRef.current = false
     setLiveDispForce(0)
@@ -1260,6 +1266,19 @@ export default function ConcreteViewer() {
   const manualDisplayKN = Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))
   const displayKN = isManual ? manualDisplayKN : liveDisplayKN
 
+  // Grey panel compression: ramps 0→1 during loading, snaps to 0 at break.
+  const compressionT = isManual
+    ? (manualP2StartFrac != null
+        ? (manualScrubT < manualP2StartFrac ? manualScrubT / manualP2StartFrac : 0)
+        : 0)
+    : (photoView === 'off'
+        ? (phase === 'testing'
+            ? bendAnim
+            : (hasRecording && p2StartFrac != null
+                ? (scrubT < p2StartFrac ? scrubT / p2StartFrac : 0)
+                : 0))
+        : 0)
+
   // How much the pusher drops: quadratic drop at pusherX position within the bar,
   // converted from bar-natural-height fraction to photo-layer-height %
   const tPusher      = Math.max(0, Math.min(1, (pusherX - barX) / Math.max(barSize, 0.1)))
@@ -1408,12 +1427,22 @@ export default function ConcreteViewer() {
                       onClick={() => setManualForceN(n => Math.max(0, n - manualForceStep))}
                       disabled={manualForceN === 0 || manualInP2}
                     ><span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.1 }}><span style={{ fontSize: '1.6em' }}>−</span><span style={{ textTransform: 'none', fontSize: '0.85em', whiteSpace: 'nowrap' }}>20 kN</span></span></button>
-                    <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
-                      <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
-                      <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
-                      <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, marginTop: -10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ position: 'relative', background: '#909e77', border: '1px solid rgba(100,90,70,0.5)', borderRadius: 3, fontFamily: '"DSEG7","Courier New",monospace', fontSize: 18, letterSpacing: '0.05em', lineHeight: 1, userSelect: 'none' }}>
+                          <span style={{ visibility: 'hidden', display: 'block', padding: '3px 6px' }}>8888</span>
+                          <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.15)', textAlign: 'right' }}>8888</span>
+                          <span style={{ position: 'absolute', inset: 0, padding: '3px 6px', color: 'rgba(60,60,60,0.75)', textAlign: 'right' }}>{Math.round(((manualInP2 && manualBreakN != null ? manualBreakN : manualForceN) / MANUAL_MAX_N) * 2500 * (manualEffectiveScale ?? kNScale))}</span>
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
+                      </div>
+                      <button
+                        className="action-btn replay-btn"
+                        style={{ padding: '1px 10px', fontSize: 11 }}
+                        onClick={() => setManualForceN(0)}
+                        disabled={manualForceN === 0 && !manualInP2}
+                      >Reset</button>
                     </div>
-                    <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.10em', color: 'rgba(30,45,60,0.70)' }}>kN</span>
                     <button
                       className="action-btn test-btn"
                       style={{ padding: '3px 9px' }}
@@ -1666,7 +1695,7 @@ export default function ConcreteViewer() {
         )}
 
         {/* Red view */}
-        <div ref={microSquareRef} className="micro-square" style={{ border: '2px solid rgba(255,80,80,0.6)', display: photoView === 'off' && activeBox !== 'red' ? 'none' : undefined }}>
+        <div ref={microSquareRef} className="micro-square" style={{ border: '4px solid rgba(255,80,80,0.6)', display: photoView === 'off' && activeBox !== 'red' ? 'none' : undefined }}>
           <div style={simWrapperStyle}>
             <MicroPanelB
               sandPct={panelSandPct}
@@ -1690,7 +1719,7 @@ export default function ConcreteViewer() {
         </div>
 
         {/* Blue view — big grain stops crack */}
-        <div ref={blueSquareRef} className="micro-square" style={{ borderTop: '2px solid rgba(80,140,255,0.5)', display: photoView === 'off' && activeBox !== 'blue' ? 'none' : undefined }}>
+        <div ref={blueSquareRef} className="micro-square" style={{ border: '2px solid rgba(80,140,255,0.6)', display: photoView === 'off' && activeBox !== 'blue' ? 'none' : undefined }}>
           <div style={blueWrapperStyle}>
             <MicroPanelB
               sandPct={panelSandPct}
@@ -1713,7 +1742,7 @@ export default function ConcreteViewer() {
         </div>
 
         {/* Grey view — static cross-section under pusher, always idle, never breaks */}
-        <div className="micro-square" style={{ borderTop: '2px solid rgba(10,10,10,0.9)', display: photoView === 'off' && activeBox === 'grey' ? undefined : 'none' }}>
+        <div className="micro-square" style={{ border: '4px solid rgba(80,80,80,0.9)', display: photoView === 'off' && activeBox === 'grey' ? undefined : 'none' }}>
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             <MicroPanelB
               sandPct={panelSandPct} phase="idle" layoutSeed={greyLayoutSeed}
@@ -1725,6 +1754,7 @@ export default function ConcreteViewer() {
               showField={showField}
               showCharge={chargeVisible}
               darkMode={darkMode}
+              compressionT={compressionT}
             />
           </div>
         </div>
